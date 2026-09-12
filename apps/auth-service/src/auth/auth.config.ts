@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createPublicKey } from 'node:crypto';
+import { loadHttpServiceConfig } from '@movie/shared-config';
 import { JwtKeyPair, loadJwtKeyPair, publicJwk } from '@movie/shared-auth';
 
 function required(name: string): string {
@@ -37,10 +38,8 @@ export interface AuthConfig {
 }
 
 export function loadAuthConfig(): AuthConfig {
-  const nodeEnv = process.env.NODE_ENV?.trim();
-  if (!nodeEnv || !['development', 'test', 'production'].includes(nodeEnv)) {
-    throw new Error('NODE_ENV must be explicitly set to development, test, or production');
-  }
+  const serviceConfig = loadHttpServiceConfig('auth-service', 'AUTH_PORT', 3001);
+  const nodeEnv = serviceConfig.nodeEnv;
   const privatePath = resolve(required('AUTH_PRIVATE_KEY_PATH'));
   const publicPath = resolve(required('AUTH_PUBLIC_KEY_PATH'));
   const kid = required('AUTH_JWT_KID');
@@ -101,7 +100,7 @@ export function loadAuthConfig(): AuthConfig {
   const issuer = required('AUTH_JWT_ISSUER');
   const audience = required('AUTH_JWT_AUDIENCE');
   return {
-    port: positiveInteger('AUTH_PORT', 3001, 65535),
+    port: serviceConfig.port,
     databaseUrl,
     issuer,
     audience,

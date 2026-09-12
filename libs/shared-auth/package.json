@@ -2,6 +2,6 @@
   "name": "@movie/shared-auth",
   "version": "0.1.0",
   "private": true,
-  "main": "../../dist/libs/shared-auth/index.js",
-  "types": "src/index.ts"
+  "main": "../../../dist/libs/shared-auth/index.js",
+  "types": "./src/index.ts"
 }

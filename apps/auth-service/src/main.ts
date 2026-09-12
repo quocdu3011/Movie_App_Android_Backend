@@ -2,8 +2,8 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
+import { HttpExceptionEnvelopeFilter } from '@movie/shared-dto';
 import { AppModule } from './app.module';
-import { HttpExceptionEnvelopeFilter } from './common/http-exception.filter';
 import { AuthService } from './auth/auth.service';
 import { loadAuthConfig } from './auth/auth.config';
 

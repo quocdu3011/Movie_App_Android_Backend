@@ -1,6 +1,10 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": { "composite": true, "rootDir": "src", "outDir": "../../dist/apps/api-gateway" },
-  "references": [{ "path": "../../libs/shared-auth" }],
+  "references": [
+    { "path": "../../libs/shared-auth" },
+    { "path": "../../libs/shared-config" },
+    { "path": "../../libs/shared-dto" }
+  ],
   "include": ["src/**/*.ts"]
 }

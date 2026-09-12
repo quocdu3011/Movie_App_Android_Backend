@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "composite": true, "rootDir": "src", "outDir": "../../dist/apps/streaming-service" },
+  "references": [
+    { "path": "../../libs/shared-config" },
+    { "path": "../../libs/shared-dto" }
+  ],
+  "include": ["src/**/*.ts"]
+}

@@ -51,3 +51,4 @@ local.properties
 playwright-report/
 test-results/
 .nyc_output/
+/document/

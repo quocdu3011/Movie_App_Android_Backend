@@ -27,8 +27,11 @@ test('RS256 access token verifies and publishes only public JWK parameters', () 
   assert.equal('d' in jwk, false);
 });
 
-test('JWT rejects wrong audience, expiry, signature and unknown kid', () => {
+test('JWT rejects wrong issuer/audience, expiry, signature and unknown kid', () => {
   const token = signAccessToken(claims, pair);
+  assert.throws(() => verifyAccessToken(token, keyMap, {
+    issuer: 'https://wrong-auth.test', audience: claims.aud, nowSeconds: claims.iat + 1,
+  }));
   assert.throws(() => verifyAccessToken(token, keyMap, {
     issuer: claims.iss, audience: 'wrong', nowSeconds: claims.iat + 1,
   }));

@@ -128,11 +128,11 @@ export class AuthService {
       .getOne();
     if (!user || user.status !== 'active') throw new UnauthorizedException(INVALID_CREDENTIALS);
 
-    let passwordValid = false;
+    let passwordValid: boolean;
     try {
       passwordValid = await argon2.verify(user.passwordHash, input.password);
     } catch {
-      passwordValid = false;
+      throw new UnauthorizedException(INVALID_CREDENTIALS);
     }
     if (!passwordValid) throw new UnauthorizedException(INVALID_CREDENTIALS);
 
@@ -152,7 +152,7 @@ export class AuthService {
         const active = sessions.filter((session) => session.expiresAt > now);
         const deviceSessions = active.filter((session) => session.deviceId === input.deviceId);
         const toRevoke = new Set(deviceSessions.map((session) => session.id));
-        let remaining = active.filter((session) => !toRevoke.has(session.id));
+        const remaining = active.filter((session) => !toRevoke.has(session.id));
         while (remaining.length >= this.config.maxDevices) {
           const oldest = remaining.shift();
           if (oldest) toRevoke.add(oldest.id);

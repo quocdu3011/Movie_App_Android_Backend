@@ -13,15 +13,31 @@
   "scripts": {
     "build": "tsc -b tsconfig.build.json",
     "typecheck": "tsc -b tsconfig.build.json --pretty false",
-    "test": "npm run build && node dist/libs/shared-auth/*.test.js",
+    "lint": "eslint apps libs scripts test --max-warnings=0",
+    "test:unit": "node --test dist/libs/**/*.test.js",
+    "test:g0": "node test/g0-smoke.mjs",
+    "test": "npm run build && npm run test:unit && npm run test:g0",
     "start:auth": "node dist/apps/auth-service/main.js",
     "start:gateway": "node dist/apps/api-gateway/main.js",
-    "dev:auth": "tsx watch apps/auth-service/src/main.ts",
-    "dev:gateway": "tsx watch apps/api-gateway/src/main.ts",
+    "start:profile": "node dist/apps/profile-service/main.js",
+    "start:catalog": "node dist/apps/catalog-service/main.js",
+    "start:payment": "node dist/apps/payment-service/main.js",
+    "start:streaming": "node dist/apps/streaming-service/main.js",
+    "start:worker": "node dist/apps/transcode-worker/main.js",
+    "start:notification": "node dist/apps/notification-service/main.js",
+    "start:recommendation": "node dist/apps/recommendation-service/main.js",
+    "dev:auth": "node --watch -r ts-node/register apps/auth-service/src/main.ts",
+    "dev:gateway": "node --watch -r ts-node/register apps/api-gateway/src/main.ts",
     "migration:run": "typeorm-ts-node-commonjs -d apps/auth-service/src/database/data-source.ts migration:run",
     "migration:show": "typeorm-ts-node-commonjs -d apps/auth-service/src/database/data-source.ts migration:show",
     "dev:keys": "bash scripts/generate-dev-keys.sh",
-    "smoke:auth": "node test/auth-smoke.mjs"
+    "smoke:auth": "node test/auth-smoke.mjs",
+    "smoke:auth-ci": "bash scripts/auth-e2e.sh",
+    "infra:up": "bash scripts/infra-up.sh",
+    "infra:bootstrap": "npm run bootstrap:postgres && bash scripts/bootstrap-kafka.sh",
+    "infra:media": "bash scripts/infra-media-up.sh",
+    "bootstrap:postgres": "node scripts/bootstrap-postgres.mjs",
+    "infra:down": "bash scripts/infra-down.sh"
   },
   "dependencies": {
     "@nestjs/common": "11.2.3",
@@ -39,10 +55,16 @@
     "typeorm": "0.3.31"
   },
   "devDependencies": {
+    "@eslint/js": "10.0.1",
     "@types/express": "5.0.3",
     "@types/node": "24.3.0",
-    "tsx": "4.23.1",
+    "eslint": "10.10.0",
+    "ts-node": "10.9.2",
     "typeorm-ts-node-commonjs": "0.3.20",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.70.0"
+  },
+  "allowScripts": {
+    "argon2@0.44.0": true
   }
 }

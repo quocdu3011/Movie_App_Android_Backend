@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { loadHttpServiceConfig } from '@movie/shared-config';
 
 export const GATEWAY_CONFIG = Symbol('GATEWAY_CONFIG');
 
@@ -13,12 +14,9 @@ export interface GatewayConfig {
 }
 
 export function loadGatewayConfig(): GatewayConfig {
-  const nodeEnv = process.env.NODE_ENV?.trim();
-  if (!nodeEnv || !['development', 'test', 'production'].includes(nodeEnv)) {
-    throw new Error('NODE_ENV must be explicitly set to development, test, or production');
-  }
-  const port = Number(process.env.GATEWAY_PORT ?? 3000);
-  if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw new Error('GATEWAY_PORT is invalid');
+  const serviceConfig = loadHttpServiceConfig('api-gateway', 'GATEWAY_PORT', 3000);
+  const nodeEnv = serviceConfig.nodeEnv;
+  const port = serviceConfig.port;
   const authUrl = process.env.AUTH_SERVICE_URL?.trim();
   const serviceToken = process.env.GATEWAY_SERVICE_TOKEN?.trim();
   const issuer = process.env.AUTH_JWT_ISSUER?.trim();

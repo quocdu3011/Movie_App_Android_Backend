@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Header, HttpCode, HttpStatus, Post, Req, UseGuards } from '@nestjs/common';
+import { successEnvelope } from '@movie/shared-dto';
 import { Request } from 'express';
 import { AUTH_CONFIG, AuthConfig } from './auth.config';
 import { Inject } from '@nestjs/common';
@@ -12,7 +13,7 @@ interface RequestWithContext extends Request {
 }
 
 function success<T>(data: T, request: RequestWithContext) {
-  return { success: true, data, error: null, requestId: request.requestId ?? 'unknown' };
+  return successEnvelope(data, request.requestId ?? 'unknown');
 }
 
 @Controller('auth')

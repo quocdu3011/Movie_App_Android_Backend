@@ -2,6 +2,7 @@ import { Controller, Get, HttpCode, HttpStatus, Post, Body, Req, Res, UseGuards,
 import { Request, Response } from 'express';
 import { ServiceUnavailableException } from '@nestjs/common';
 import { PublicRoute } from '@movie/shared-auth';
+import { errorEnvelope, successEnvelope } from '@movie/shared-dto';
 import { GATEWAY_CONFIG, GatewayConfig } from '../gateway.config';
 import { AuthenticatedRequest } from './access-auth.guard';
 import { AuthRateLimitGuard } from './auth-rate-limit.guard';
@@ -61,11 +62,10 @@ export class AuthProxyController {
         signal: AbortSignal.timeout(5_000),
       });
     } catch {
-      response.status(503).json({
-        success: false, data: null,
-        error: { code: 'AUTH_UNAVAILABLE', message: 'Authentication service unavailable' },
-        requestId: request.requestId ?? 'unknown',
-      });
+      response.status(503).json(errorEnvelope(
+        { code: 'AUTH_UNAVAILABLE', message: 'Authentication service unavailable' },
+        request.requestId ?? 'unknown',
+      ));
       return;
     }
     const contentType = upstream.headers.get('content-type');
@@ -86,12 +86,7 @@ export class SessionController {
   @Get('session')
   current(@Req() request: AuthenticatedRequest) {
     const session = request.authSession;
-    return {
-      success: true,
-      data: session,
-      error: null,
-      requestId: request.requestId ?? 'unknown',
-    };
+    return successEnvelope(session, request.requestId ?? 'unknown');
   }
 }
 
@@ -102,7 +97,7 @@ export class GatewayHealthController {
   @Get('health')
   @PublicRoute()
   health(@Req() request: AuthenticatedRequest) {
-    return { success: true, data: { status: 'ok', service: 'api-gateway' }, error: null, requestId: request.requestId ?? 'unknown' };
+    return successEnvelope({ status: 'ok', service: 'api-gateway' }, request.requestId ?? 'unknown');
   }
 
   @Get('ready')
@@ -117,7 +112,7 @@ export class GatewayHealthController {
     } catch {
       throw new ServiceUnavailableException('Authentication service is not ready');
     }
-    return { success: true, data: { status: 'ready', service: 'api-gateway' }, error: null, requestId: request.requestId ?? 'unknown' };
+    return successEnvelope({ status: 'ready', service: 'api-gateway' }, request.requestId ?? 'unknown');
   }
 }
 
@@ -126,11 +121,6 @@ export class AdminSessionController {
   @Get('session')
   @RequireRoles('admin', 'content_manager')
   current(@Req() request: AuthenticatedRequest) {
-    return {
-      success: true,
-      data: request.authSession,
-      error: null,
-      requestId: request.requestId ?? 'unknown',
-    };
+    return successEnvelope(request.authSession, request.requestId ?? 'unknown');
   }
 }

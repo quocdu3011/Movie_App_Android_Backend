@@ -1,8 +1,19 @@
 {
   "files": [],
   "references": [
+    { "path": "./libs/shared-dto" },
+    { "path": "./libs/shared-config" },
+    { "path": "./libs/shared-kafka" },
     { "path": "./libs/shared-auth" },
+    { "path": "./libs/content-provider" },
     { "path": "./apps/auth-service" },
-    { "path": "./apps/api-gateway" }
+    { "path": "./apps/api-gateway" },
+    { "path": "./apps/profile-service" },
+    { "path": "./apps/catalog-service" },
+    { "path": "./apps/payment-service" },
+    { "path": "./apps/streaming-service" },
+    { "path": "./apps/transcode-worker" },
+    { "path": "./apps/notification-service" },
+    { "path": "./apps/recommendation-service" }
   ]
 }

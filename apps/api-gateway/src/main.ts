@@ -2,9 +2,9 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
+import { HttpExceptionEnvelopeFilter } from '@movie/shared-dto';
 import { AppModule } from './app.module';
-import { GATEWAY_CONFIG, loadGatewayConfig } from './gateway.config';
-import { HttpExceptionEnvelopeFilter } from './common/http-exception.filter';
+import { loadGatewayConfig } from './gateway.config';
 
 async function bootstrap(): Promise<void> {
   const config = loadGatewayConfig();

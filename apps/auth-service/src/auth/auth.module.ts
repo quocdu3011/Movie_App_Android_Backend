@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
+import { RequestIdMiddleware } from '@movie/shared-dto';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { AUTH_CONFIG, AuthConfig, loadAuthConfig } from './auth.config';
+import { AUTH_CONFIG, loadAuthConfig } from './auth.config';
 import { AuthController, AuthHealthController, InternalAuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { ServiceTokenGuard } from './service-token.guard';
@@ -8,7 +9,6 @@ import { AuthSession } from '../sessions/auth-session.entity';
 import { RefreshToken } from '../sessions/refresh-token.entity';
 import { User } from '../users/user.entity';
 import { CreateAuthSchema1700000000000 } from '../database/migrations/1700000000000-CreateAuthSchema';
-import { RequestIdMiddleware } from '../common/request-id.middleware';
 import { MiddlewareConsumer, NestModule, RequestMethod } from '@nestjs/common';
 
 const authConfig = loadAuthConfig();
@@ -25,7 +25,9 @@ const authConfig = loadAuthConfig();
       migrationsRun: false,
       retryAttempts: 5,
       retryDelay: 1000,
-      logging: authConfig.nodeEnv === 'development' ? ['error', 'warn'] : ['error'],
+      // TypeORM query errors can include bound values such as password hashes.
+      // Keep database query logging disabled in every environment.
+      logging: false,
     }),
     TypeOrmModule.forFeature([User, AuthSession, RefreshToken]),
   ],

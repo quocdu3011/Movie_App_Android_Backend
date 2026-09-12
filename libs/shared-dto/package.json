@@ -1,0 +1,10 @@
+{
+  "name": "@movie/shared-dto",
+  "version": "0.1.0",
+  "private": true,
+  "main": "../../../dist/libs/shared-dto/index.js",
+  "types": "./src/index.ts",
+  "dependencies": {
+    "@nestjs/common": "11.2.3"
+  }
+}

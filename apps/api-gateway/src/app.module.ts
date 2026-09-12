@@ -6,7 +6,7 @@ import { AuthRateLimitGuard } from './auth/auth-rate-limit.guard';
 import { JwksClient } from './auth/jwks.client';
 import { RoleGuard } from './auth/role.guard';
 import { GATEWAY_CONFIG, loadGatewayConfig } from './gateway.config';
-import { RequestIdMiddleware } from './common/request-id.middleware';
+import { RequestIdMiddleware } from '@movie/shared-dto';
 
 const config = loadGatewayConfig();
 

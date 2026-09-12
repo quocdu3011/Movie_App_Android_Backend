@@ -1,0 +1,46 @@
+name: Backend CI
+
+on:
+  push:
+  pull_request:
+
+defaults:
+  run:
+    working-directory: .
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Check Compose configuration
+        run: docker compose --env-file .env.example config --quiet
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build all workspace projects
+        run: npm run build
+      - name: Unit and HTTP end-to-end smoke tests
+        run: npm run test:unit && npm run test:g0
+      - name: Start core infrastructure and bootstrap twice
+        run: |
+          cp .env.example .env
+          npm run infra:up
+          npm run infra:bootstrap
+          npm run smoke:auth-ci
+          node scripts/infra-persistence.mjs mark
+          sleep 2
+          docker compose --profile core restart postgres redis kafka
+          docker compose --profile core up --detach --wait
+          node scripts/infra-persistence.mjs verify
+          npm run infra:bootstrap
+      - name: Stop test infrastructure
+        if: always()
+        run: if [ -f .env ]; then docker compose --profile core --profile media --profile observability down --volumes --remove-orphans; fi
