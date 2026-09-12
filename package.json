@@ -1,0 +1,48 @@
+{
+  "name": "movieapp-backend",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=24.15 <25",
+    "npm": ">=10"
+  },
+  "workspaces": [
+    "apps/*",
+    "libs/*"
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "typecheck": "tsc -b tsconfig.build.json --pretty false",
+    "test": "npm run build && node dist/libs/shared-auth/*.test.js",
+    "start:auth": "node dist/apps/auth-service/main.js",
+    "start:gateway": "node dist/apps/api-gateway/main.js",
+    "dev:auth": "tsx watch apps/auth-service/src/main.ts",
+    "dev:gateway": "tsx watch apps/api-gateway/src/main.ts",
+    "migration:run": "typeorm-ts-node-commonjs -d apps/auth-service/src/database/data-source.ts migration:run",
+    "migration:show": "typeorm-ts-node-commonjs -d apps/auth-service/src/database/data-source.ts migration:show",
+    "dev:keys": "bash scripts/generate-dev-keys.sh",
+    "smoke:auth": "node test/auth-smoke.mjs"
+  },
+  "dependencies": {
+    "@nestjs/common": "11.2.3",
+    "@nestjs/core": "11.2.3",
+    "@nestjs/platform-express": "11.2.3",
+    "@nestjs/typeorm": "11.0.0",
+    "argon2": "0.44.0",
+    "class-transformer": "0.5.1",
+    "class-validator": "0.14.3",
+    "dotenv": "16.6.1",
+    "helmet": "8.1.0",
+    "pg": "8.16.3",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2",
+    "typeorm": "0.3.31"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.3",
+    "@types/node": "24.3.0",
+    "tsx": "4.23.1",
+    "typeorm-ts-node-commonjs": "0.3.20",
+    "typescript": "5.9.3"
+  }
+}

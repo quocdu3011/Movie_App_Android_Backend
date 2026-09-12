@@ -1,0 +1,8 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./libs/shared-auth" },
+    { "path": "./apps/auth-service" },
+    { "path": "./apps/api-gateway" }
+  ]
+}

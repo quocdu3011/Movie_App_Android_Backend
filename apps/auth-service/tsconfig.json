@@ -1,0 +1,6 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "composite": true, "rootDir": "src", "outDir": "../../dist/apps/auth-service" },
+  "references": [{ "path": "../../libs/shared-auth" }],
+  "include": ["src/**/*.ts"]
+}

@@ -1,0 +1,6 @@
+{
+  "name": "@movie/auth-service",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": { "@movie/shared-auth": "0.1.0" }
+}
