@@ -1,6 +1,6 @@
 # TODO và prompt triển khai backend — App xem phim
 
-Bản đồng bộ: **2026-09-12 / revision 6**. Checklist chưa tick là việc chưa có bằng chứng nghiệm thu. G0, G1 và G2 đã qua nghiệm thu local end-to-end: kiểm tra code trên Node 24.21.0, Compose bootstrap, Auth/Gateway/Profile E2E với PostgreSQL Compose và kiểm tra outbox phục hồi khi Kafka trở lại. GitHub Actions remote chưa được kích hoạt; tài liệu tách rõ bằng chứng local khỏi kết quả CI hosted.
+Bản đồng bộ: **2026-09-12 / revision 7**. Checklist chưa tick là việc chưa có bằng chứng nghiệm thu. G0–G3 đã qua nghiệm thu local end-to-end trên Node 24.21.0 và PostgreSQL/Kafka Compose. Workflow GitHub Actions có kiểm tra Catalog; hosted result chỉ được xác nhận sau khi push/trigger CI. Tài liệu tách rõ bằng chứng local khỏi kết quả CI hosted.
 
 Đọc [thiết kế app](thiet-ke-app-xem-phim.md), [thiết kế backend chi tiết](backend-chi-tiet.md) và [tài liệu tích hợp KKPhim](kkphim-api.md) trước các giai đoạn liên quan. Backend chi tiết là nguồn chuẩn schema/API/event của MovieApp; tài liệu KKPhim là tham chiếu endpoint/response của provider; TODO không định nghĩa schema cạnh tranh.
 
@@ -41,7 +41,7 @@ Gateway được mở rộng trong từng giai đoạn, không đợi cuối m�
 - [x] PostgreSQL bootstrap tạo/tái sử dụng 8 database/user, chạy lặp trên PostgreSQL 16.15 tạm và PostgreSQL 16.4 Compose.
 - [x] Compose core health, Kafka topic bootstrap, Redis/Kafka/PostgreSQL persistence sau restart đã chạy thành công.
 - [x] Media profile MinIO health/bucket bootstrap đã chạy và được xác nhận.
-- [x] Health/readiness, requestId, shared response/error/config và route skeleton; HTTP smoke cho Gateway + sáu service chưa có nghiệp vụ đã pass, Profile được nghiệm thu trong G2.
+- [x] Health/readiness, requestId, shared response/error/config và route skeleton; HTTP smoke cho Gateway + năm service chưa đến giai đoạn đã pass, Profile được nghiệm thu ở G2 và Catalog ở G3 sau khi DB sẵn sàng.
 - [x] Tạo CI lint/typecheck/unit/build và core infrastructure acceptance workflow tại Git root `Backend/`.
 - [x] CI-equivalent code checks chạy xanh trên Node 24.21.0; core Compose acceptance chạy xanh local.
 - [ ] GitHub Actions remote chạy xanh trên Node 24.21.0; chưa trigger vì working tree chưa được push và `gh auth status` báo token không hợp lệ.
@@ -136,11 +136,11 @@ Test ownership mọi path và profile ID do user khác truyền vào, concurrent
 
 ## G3 — Catalog hai nguồn và import KKPhim
 
-- [ ] Schema movies/seasons/playable_items/content_sources/source_items và sync_runs.
-- [ ] Mapping phim lẻ/tập/server, composite constraints, không tạo external video_assets.
-- [ ] Public catalog từ DB nội bộ; Admin discovery/import/sync với ID ổn định.
-- [ ] Metadata cache strip URL, metadata-lock, archive và event semantics.
-- [ ] OpenAPI và fixtures lỗi/mapping, job sync lease/checkpoint.
+- [x] Schema movies/seasons/playable_items/content_sources/source_items và sync_runs.
+- [x] Mapping phim lẻ/tập/server, composite constraints, không tạo external video_assets.
+- [x] Public catalog từ DB nội bộ; Admin discovery/import/sync với ID ổn định.
+- [x] Metadata cache strip URL, metadata-lock, archive và event semantics.
+- [x] OpenAPI và fixtures lỗi/mapping, job sync lease/checkpoint.
 
 **Prompt:**
 
@@ -170,6 +170,8 @@ Cron mặc định dev tắt, seed/fixtures đủ movie lẻ/series và cả hai
 ```
 
 **Nghiệm thu:** unique/source mapping thật ở DB; rating 10.0 hợp lệ; phim hoạt hình không bị ép thành series; tập Full/special không parse sai; hai server cùng tập không trùng history ID; slug đổi giữ UUID; mapping mơ hồ báo conflict; sync lặp không spam movie.published; khóa metadata vẫn refresh nguồn; archive không bị sync mở lại; response public/cache/DB không chứa link phát ngoài. Các item chưa transcode trả khả năng phát chưa sẵn sàng, không seed asset ready giả.
+
+**Kết quả local 2026-09-12:** Migration Catalog chạy trên `catalog_db` PostgreSQL Compose. Trên Node 24.21.0, `npm ci`, lint, typecheck, build và 9 unit tests pass; `smoke:catalog-ci` chạy Auth → Gateway → Profile → Catalog với PostgreSQL/Kafka Compose và KKPhim fixture offline, exit code 0. E2E xác nhận auth/role, import phim lẻ/series và attach vào phim owned, rating 10.0/hoạt hình/Full/special, playable/source-item mapping, same-movie constraints/audit, đổi slug giữ UUID, metadata lock vẫn refresh source availability, archive bền qua refresh, kids ownership/cache, không lưu URL playback trong DB/event/public response, checkpoint bền, expired lease được reclaim và Kafka ACK trước khi đánh published. Smoke live đọc-only qua `npm run smoke:kkphim-live` cũng pass: discovery legacy 24 mục, search v1 parse được 1–20 kết quả theo keyword giữa hai lượt, detail 479 selector và resolver HLS; URL không được in/lưu, không ghi DB. Workflow CI gọi `smoke:catalog-ci`; smoke live chỉ chạy thủ công, không đưa vào CI deterministic. Chưa có kết quả GitHub Actions hosted trong phiên này. Search nội bộ hiện là PostgreSQL `ILIKE`, chưa phải nghiệm thu OpenSearch hoặc tìm kiếm tiếng Việt nâng cao (G7).
 
 ## G4 — Payment mock và entitlement
 

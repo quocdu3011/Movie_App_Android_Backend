@@ -199,8 +199,8 @@ MVP không hứa download offline. Phần mở rộng cần thiết kế quota d
 
 | Mốc | Giai đoạn TODO | Kết quả |
 |---|---|---|
-| Nền tảng | G0–G2 | Workspace/CI/Gateway/Auth/Profile dùng được |
-| Nghiệp vụ | G3–G4 | Catalog hai nguồn, import ổn định, payment mock/entitlement |
+| Nền tảng và danh tính | G0–G2 | Workspace/CI/Gateway/Auth/Profile dùng được |
+| Catalog và thương mại | G3–G4 | Catalog hai nguồn, import ổn định, payment mock/entitlement |
 | Xem phim | G5–G6 | Session/progress KKPhim + upload/transcode/phát owned hoàn chỉnh |
 | Trải nghiệm dữ liệu | G7–G8 | Search tiếng Việt, personalized home/history, notification mock/gợi ý |
 | Nghiệm thu và triển khai | G9–G10 | E2E/fault checks cho hai nguồn, staging/deployment theo cấu hình thực tế |

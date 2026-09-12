@@ -1,6 +1,6 @@
 # Thiết kế backend chi tiết — App xem phim
 
-Bản đồng bộ: **2026-09-12 / revision 3**. Đây là đặc tả thiết kế; trạng thái triển khai G0/G1 được ghi riêng tại mục 8.2. Phạm vi không bao gồm kiểm tra bản quyền nguồn bên thứ ba.
+Bản đồng bộ: **2026-09-12 / revision 4**. Đây là đặc tả thiết kế; trạng thái triển khai từng giai đoạn được ghi riêng tại mục 8.2–8.4. Phạm vi không bao gồm kiểm tra bản quyền nguồn bên thứ ba.
 
 ## 0. Quy ước và quyết định nền
 
@@ -32,7 +32,7 @@ Bản đồng bộ: **2026-09-12 / revision 3**. Đây là đặc tả thiết k
 
 Các phiên bản trên đã được pin trong manifest/Compose, không dùng tag `latest`. Kafka heap và OpenSearch heap đều giới hạn 512 MiB; profile core cần khoảng 1–2 GiB khi nhàn rỗi, media thêm khoảng 1 GiB, observability thêm khoảng 0.5–1 GiB. Đây là dự toán từ cấu hình, chưa phải số đo benchmark; để bật OpenSearch cần `vm.max_map_count=262144` trên host Linux. Image single-node, Kafka replication factor 1 và credentials ví dụ chỉ dành cho máy phát triển/CI, không phải cấu hình HA/production. Compose profile `core` chạy PostgreSQL, Redis, Kafka; `media` bổ sung OpenSearch, MinIO, media-edge; `observability` bổ sung Prometheus, Grafana, Loki.
 
-Workspace G0/G1 dùng `package-lock.json`; `.nvmrc` chọn Node 24.21.0. CI phải dùng đúng phiên bản này. Các app còn lại hiện chỉ là health/readiness skeleton; `content-provider` là interface, `shared-kafka` là event contract, chưa có business logic/client kết nối thật.
+Workspace dùng `package-lock.json`; `.nvmrc` chọn Node 24.21.0. CI phải dùng đúng phiên bản này. Các service business được triển khai theo từng giai đoạn; G3 bổ sung Catalog và content-provider KKPhim có fixture offline, còn luồng playback được giữ tách biệt cho G5.
 
 ```text
 Backend/                                  # Git repository root
@@ -53,7 +53,7 @@ Backend/                                  # Git repository root
 │   ├── shared-auth/
 │   ├── shared-config/
 │   ├── shared-kafka/                     # Envelope, outbox/inbox helpers
-│   └── content-provider/                 # Provider contract, chưa có HTTP client
+│   └── content-provider/                 # KKPhim metadata client + playback resolver interface
 ├── docker/                               # media-edge, Dockerfiles, observability config
 ├── docker-compose.yml
 └── package.json
@@ -487,14 +487,14 @@ Một qualified view: session báo xem tích lũy tối thiểu 30 giây, event 
 | Đếm progress thành lượt xem | qualified view unique session | Một session nhiều progress chỉ một view |
 | CI/CD trước E2E và path filter bỏ sót libs | E2E trước deploy, dependency-aware checks | Thay shared lib/lockfile kích hoạt checks |
 
-Các hợp đồng đã được đối chiếu ở mức tài liệu. G0–G2 hiện có code và bằng chứng tương ứng tại mục 8.2–8.3; các service business chưa triển khai vẫn cần kiểm tra theo từng giai đoạn. Chưa có kết quả test tải hoặc chứng minh provider/CDN tương thích thật; các tiêu chí đó nằm trong TODO, không được đánh dấu hoàn thành chỉ vì đã viết thiết kế.
+Các hợp đồng đã được đối chiếu ở mức tài liệu. G0–G3 hiện có code và bằng chứng tương ứng tại mục 8.2–8.4; các service business còn lại vẫn cần kiểm tra theo từng giai đoạn. Chưa có kết quả test tải hoặc chứng minh provider/CDN tương thích thật; các tiêu chí đó nằm trong TODO, không được đánh dấu hoàn thành chỉ vì đã viết thiết kế.
 
 ### 8.2. G0 implementation và bằng chứng nghiệm thu hiện tại
 
 - Workspace pin Node 24.21.0 qua `.nvmrc`, NestJS 11.2.3, TypeORM 0.3.31, TypeScript 5.9.3 và dependency lockfile; tạo đủ chín app cùng năm thư viện. Các service chưa đến giai đoạn vẫn trả health/readiness; Auth và Profile đã có nghiệp vụ G1/G2, Gateway readiness phụ thuộc Auth.
-- `shared-dto` cung cấp envelope, exception filter, request ID và health module; `shared-config` từ chối `NODE_ENV` thiếu/sai; `shared-kafka` và `content-provider` mới là contract/interface.
+- `shared-dto` cung cấp envelope, exception filter, request ID và health module; `shared-config` từ chối `NODE_ENV` thiếu/sai; `shared-kafka` cung cấp event contract, còn `content-provider` có client metadata KKPhim fixture-compatible và resolver playback riêng cho G5.
 - Compose có ba profile, named volumes, cổng host bind loopback và healthcheck dịch vụ. PostgreSQL bootstrap tạo/tái sử dụng tám database/user; Kafka dùng `--if-not-exists`; MinIO tạo hai bucket riêng tư idempotent. Kafka dev một broker chỉ có replication factor 1.
-- CI-equivalent trên Node 24.21.0: `npm ci`, lint, typecheck, build, 4 unit tests, HTTP smoke cho Gateway + sáu service chưa có nghiệp vụ, G1 Auth E2E và G2 Profile E2E đều pass. G0 smoke xác nhận startup, health/readiness, request ID, error envelope, Gateway fail-closed khi Auth không sẵn sàng và startup lỗi khi thiếu `NODE_ENV`; Profile health/readiness và nghiệp vụ được kiểm tra ở G2.
+- CI-equivalent trên Node 24.21.0: `npm ci`, lint, typecheck, build, unit tests, HTTP smoke cho Gateway + các service chưa đến giai đoạn, và các E2E theo từng giai đoạn đều pass. G0 smoke xác nhận startup, health/readiness, request ID, error envelope, Gateway fail-closed khi Auth không sẵn sàng và startup lỗi khi thiếu `NODE_ENV`; Catalog readiness/business được kiểm tra trong G3 E2E sau khi PostgreSQL đã sẵn sàng.
 - PostgreSQL bootstrap đã tạo đủ tám database/user và chạy lại lần hai không lỗi trên cluster tạm PostgreSQL 16.15. Cluster tạm đã dừng; cluster hệ thống không bị thay đổi.
 - Sau khi cài Docker Engine, Compose core được chạy lại ngày 2026-09-12: PostgreSQL 16.4, Redis 7.4.2 và Kafka 4.2.0 healthy; bootstrap tám DB/user và 13 topic chạy liên tiếp hai lượt thành công. Persistence sau restart đã được kiểm tra trong G0 acceptance trước đó. GitHub Actions hosted chưa được trigger vì worktree chưa push và xác thực `gh` không khả dụng; không ghi kết quả local thành CI remote.
 - Host Node 26.7.0 không được dùng làm bằng chứng tương thích; toàn bộ code check và E2E ở đây chạy trong image Node 24.21.0.
@@ -508,5 +508,14 @@ Các hợp đồng đã được đối chiếu ở mức tài liệu. G0–G2 h
 - `smoke:profile-ci` pass trên PostgreSQL Compose: 6 concurrent POST cho 5×201 + 1×409; giả mạo `x-user-id` không đổi owner; user khác không list/sửa/xóa/validate được profile; thiếu internal token → 401; service ngoài allowlist → 403; deleted profile → validate 404; xóa lặp → 204 và đúng một outbox event.
 - Outbox E2E xác nhận event còn unpublished và có retry/error khi Kafka không sẵn sàng, sau đó consumer thật nhận đúng `profile.deleted` khi Kafka hoạt động; row chỉ được đánh published sau ACK. E2E chạy lại migration và xác nhận không còn migration pending.
 - Full local run trên Node 24.21.0: lint, typecheck, build, 4 unit tests, G0 HTTP smoke, G1 Auth E2E và G2 Profile E2E đều exit code 0. GitHub Actions workflow đã được thêm job `smoke:profile-ci` sau bootstrap core; remote result còn chờ push/trigger.
+
+### 8.4. G3 Catalog hai nguồn và KKPhim — implementation và bằng chứng local
+
+- Migration Catalog được áp dụng lên `catalog_db` PostgreSQL Compose. Schema tạo phim, taxonomy, seasons, playable items, owned/third-party content sources, source items, durable sync runs, audit log và outbox. CHECK/partial UNIQUE/composite FK bảo vệ rating `0..10`, playable kind, selector uniqueness và liên kết cùng movie; Catalog không tạo `video_assets`.
+- Catalog có public list/search/detail/home qua Gateway và Admin APIs theo bảng mục 4.3. User/profileId đi qua Gateway JWT/session, Profile ownership validation và kids filtering; personalized responses là `no-store`, public response không mang profile state. Search G3 hiện dùng PostgreSQL `ILIKE` trên title/originTitle; OpenSearch và tìm kiếm tiếng Việt nâng cao thuộc G7.
+- KKPhim provider client đọc fixture legacy và v1, chuẩn hóa phim lẻ/series, rating 10.0, hoạt hình và selector tập/special. Metadata projection chỉ giữ boolean `hasHls/hasEmbed`, không giữ URL phát; resolver playback là interface riêng để G5 gọi detail mới. Smoke live đọc-only ngày 2026-09-12 qua adapter thật đã parse được discovery/search/detail và resolve `external_hls`; smoke không lưu/in URL và không tải manifest/segment nên expiry/CDN compatibility vẫn chưa được chứng minh.
+- Admin import/search/discovery/refresh và sync-run status đã được thêm. Job được lưu trong PostgreSQL, worker claim bằng lease/`SKIP LOCKED`, checkpoint theo trang/selector, reclaim lease hết hạn và bounded discovery. Upsert dùng provider external ID, slug thay được, không xóa bản ghi vì discovery vắng mặt, không merge theo tên. `metadata_locked` khóa trường biên tập nhưng vẫn cập nhật selector/availability; auto-publish không mở lại phim archived. Mapping source item kiểm tra cùng movie, giữ playable ID và ghi audit.
+- Catalog outbox dùng producer Kafka và chỉ đánh `published_at` sau broker ACK. Public response, Catalog DB, checkpoint và event envelope được E2E kiểm tra không chứa fixture playback URLs. Owned source item mới tạo giữ `unknown`; trạng thái sẵn sàng do Streaming G6 xác nhận.
+- Bằng chứng local trên Node `24.21.0` với PostgreSQL/Kafka Compose: `npm ci`, `npm run lint`, `npm run typecheck`, `npm run build`, `npm run test:unit`, G0 HTTP smoke, G1 Auth E2E, G2 Profile E2E và `npm run smoke:catalog-ci` exit code 0. G3 E2E khởi động Auth/Gateway/Profile/Catalog thật, dùng KKPhim HTTP fixture offline và kiểm tra role, hai nguồn, mapping, profile/kids, lock/archive/slug, lease recovery/checkpoint, DB/public URL isolation và Kafka outbox ACK. GitHub Actions workflow gọi smoke Catalog sau bootstrap; kết quả hosted chưa được quan sát do cần push/trigger.
 
 Tham khảo kỹ thuật: [NestJS workspace](https://docs.nestjs.com/cli/monorepo), [PostgreSQL constraints](https://www.postgresql.org/docs/current/ddl-constraints.html), [TypeORM migrations](https://typeorm.io/docs/advanced-topics/migrations/), [Apache Kafka Docker image](https://kafka.apache.org/42/getting-started/docker/), [MinIO health probes](https://min.io/docs/minio/linux/operations/monitoring/healthcheck-probe.html), [OAuth refresh-token security](https://www.rfc-editor.org/rfc/rfc9700.html), [CloudFront signed cookies](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-choosing-signed-urls-cookies.html). Các quyết định domain/TTL/thứ tự giai đoạn là thiết kế của dự án, không phải yêu cầu từ những tài liệu ngoài này.

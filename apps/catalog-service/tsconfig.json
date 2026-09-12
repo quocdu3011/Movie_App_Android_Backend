@@ -2,8 +2,11 @@
   "extends": "../../tsconfig.json",
   "compilerOptions": { "composite": true, "rootDir": "src", "outDir": "../../dist/apps/catalog-service" },
   "references": [
+    { "path": "../../libs/content-provider" },
+    { "path": "../../libs/shared-auth" },
     { "path": "../../libs/shared-config" },
-    { "path": "../../libs/shared-dto" }
+    { "path": "../../libs/shared-dto" },
+    { "path": "../../libs/shared-kafka" }
   ],
   "include": ["src/**/*.ts"]
 }

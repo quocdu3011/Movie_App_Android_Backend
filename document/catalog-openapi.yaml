@@ -1,0 +1,358 @@
+openapi: 3.1.0
+info:
+  title: MovieApp Catalog API
+  version: 0.1.0
+  description: >-
+    Catalog API exposed by API Gateway. Public responses contain only imported
+    catalog metadata and internal IDs; playback URLs and provider selectors are
+    deliberately excluded. Admin paths require an authenticated admin or
+    content_manager role. This contract covers G3; playback is specified in G5.
+servers:
+  - url: http://localhost:3000
+    description: Local API Gateway
+tags:
+  - name: Catalog
+  - name: Catalog Admin
+security: []
+paths:
+  /catalog/home:
+    get:
+      tags: [Catalog]
+      summary: Read public catalog home items
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Catalog items from the local database
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuccessEnvelope' }
+  /catalog/movies:
+    get:
+      tags: [Catalog]
+      summary: Browse locally imported movies
+      description: Supplying profileId requires a user access token, validates profile ownership, and filters non-kids-safe items for kids profiles. Responses with profileId are no-store.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Query'
+        - $ref: '#/components/parameters/Genre'
+        - $ref: '#/components/parameters/Country'
+        - $ref: '#/components/parameters/Year'
+        - $ref: '#/components/parameters/MovieType'
+        - $ref: '#/components/parameters/ContentKind'
+        - $ref: '#/components/parameters/SourceType'
+        - $ref: '#/components/parameters/Provider'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/ProfileId'
+      responses:
+        '200': { description: Stable page of published catalog movies, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessEnvelope' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Profile does not belong to the authenticated user }
+  /catalog/search:
+    get:
+      tags: [Catalog]
+      summary: Search the local catalog
+      description: G3 uses PostgreSQL ILIKE on title and originTitle; advanced Vietnamese search/OpenSearch is deferred to G7.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string, maxLength: 100 }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/ProfileId'
+      responses:
+        '200': { description: Search results from the local catalog, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessEnvelope' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /catalog/movies/{movieId}:
+    get:
+      tags: [Catalog]
+      summary: Read public movie detail
+      parameters:
+        - $ref: '#/components/parameters/MovieId'
+        - $ref: '#/components/parameters/ProfileId'
+      responses:
+        '200': { description: Movie detail without playback URLs or external source selectors, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessEnvelope' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Movie is missing, archived, or unavailable to this profile }
+  /admin/movies:
+    get:
+      tags: [Catalog Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: status
+          in: query
+          schema: { type: string, enum: [draft, published, archived] }
+      responses:
+        '200': { description: Admin movie page, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessEnvelope' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Catalog Admin]
+      security: [{ bearerAuth: [] }]
+      summary: Create an owned/local movie record
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CreateMovie' } } }
+      responses:
+        '201': { description: Created movie, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessEnvelope' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/movies/{movieId}:
+    patch:
+      tags: [Catalog Admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/MovieId' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/PatchMovie' } } }
+      responses:
+        '200': { description: Updated movie, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessEnvelope' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Movie not found }
+  /admin/movies/{movieId}/publish:
+    post:
+      tags: [Catalog Admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/MovieId' }]
+      responses:
+        '200': { description: Published movie; movie.published is emitted only on a state transition }
+        '409': { description: Movie does not satisfy publish requirements }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/movies/{movieId}/archive:
+    post:
+      tags: [Catalog Admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/MovieId' }]
+      responses:
+        '200': { description: Archived movie; event is written through the outbox }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/movies/{movieId}/seasons:
+    post:
+      tags: [Catalog Admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/MovieId' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [seasonNumber], properties: { seasonNumber: { type: integer, minimum: 1 }, isSynthetic: { type: boolean, default: false } } } } }
+      responses:
+        '201': { description: Created season }
+        '409': { description: Season conflicts with movie type or existing season }
+  /admin/movies/{movieId}/playable-items:
+    post:
+      tags: [Catalog Admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/MovieId' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CreatePlayable' } } }
+      responses:
+        '201': { description: Created movie playable or episode }
+        '409': { description: Movie/playable kind or unique mapping conflict }
+  /admin/movies/{movieId}/content-sources:
+    post:
+      tags: [Catalog Admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/MovieId' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CreateSource' } } }
+      responses:
+        '201': { description: Created owned or third-party source; does not create a video asset }
+        '409': { description: Provider identity already attached }
+  /admin/content-sources/{sourceId}/items:
+    post:
+      tags: [Catalog Admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/SourceId' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CreateSourceItem' } } }
+      responses:
+        '201': { description: Created selector mapping; owned source status remains unknown until Streaming G6 confirms readiness }
+        '409': { description: Playable belongs to another movie or selector is ambiguous }
+  /admin/source-items/{sourceItemId}:
+    patch:
+      tags: [Catalog Admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: sourceItemId, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/PatchSourceItem' } } }
+      responses:
+        '200': { description: Updated mapping, stable playableId, audit row written }
+        '409': { description: Mapping conflict or playable belongs to another movie }
+  /admin/content-sources/{sourceId}/metadata-lock:
+    patch:
+      tags: [Catalog Admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/SourceId' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [locked], properties: { locked: { type: boolean } } } } }
+      responses:
+        '200': { description: Changed metadata lock state }
+        '404': { description: Source not found }
+  /admin/providers/kkphim/search:
+    get:
+      tags: [Catalog Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: keyword, in: query, required: true, schema: { type: string, minLength: 1, maxLength: 100 } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+      responses:
+        '200': { description: KKPhim discovery metadata without playback URLs }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/providers/kkphim/import:
+    post:
+      tags: [Catalog Admin]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [slug], properties: { slug: { type: string, minLength: 1, maxLength: 180 }, movieId: { type: string, format: uuid, description: Attach this provider source to an existing canonical movie identity } } } } }
+      responses:
+        '202':
+          description: Durable import queued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyncRunAccepted' }
+        '409': { description: Ambiguous provider-to-catalog mapping }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/providers/kkphim/sync:
+    post:
+      tags: [Catalog Admin]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, properties: { mode: { type: string, enum: [discovery, refresh], default: discovery }, maxPages: { type: integer, minimum: 1, maximum: 3, default: 1 } } } } }
+      responses:
+        '202':
+          description: Durable bounded sync queued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyncRunAccepted' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/providers/kkphim/sync-runs:
+    get:
+      tags: [Catalog Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200': { description: Admin view of durable import/sync jobs }
+        '403': { $ref: '#/components/responses/Forbidden' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    Page: { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+    PageSize: { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+    Query: { name: q, in: query, schema: { type: string, maxLength: 100 } }
+    Genre: { name: genre, in: query, schema: { type: string, maxLength: 120 } }
+    Country: { name: country, in: query, schema: { type: string, maxLength: 120 } }
+    Year: { name: year, in: query, schema: { type: integer, minimum: 1800, maximum: 2200 } }
+    MovieType: { name: type, in: query, schema: { type: string, enum: [movie, series] } }
+    ContentKind: { name: contentKind, in: query, schema: { type: string, enum: [film, animation, show] } }
+    SourceType: { name: sourceType, in: query, schema: { type: string, enum: [owned, third_party] } }
+    Provider: { name: provider, in: query, schema: { type: string, maxLength: 80 } }
+    Sort: { name: sort, in: query, schema: { type: string, enum: [newest, rating, title], default: newest } }
+    ProfileId: { name: profileId, in: query, schema: { type: string, format: uuid } }
+    MovieId: { name: movieId, in: path, required: true, schema: { type: string, format: uuid } }
+    SourceId: { name: sourceId, in: path, required: true, schema: { type: string, format: uuid } }
+  responses:
+    Unauthorized: { description: Missing or invalid access token }
+    Forbidden: { description: User lacks admin or content_manager role }
+  schemas:
+    SuccessEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, const: true }
+        requestId: { type: string }
+        data: { type: object, additionalProperties: true }
+    SyncRunAccepted:
+      type: object
+      properties:
+        success: { type: boolean, const: true }
+        data:
+          type: object
+          required: [syncRunId, status]
+          properties:
+            syncRunId: { type: string, format: uuid }
+            status: { type: string, const: queued }
+    CreateMovie:
+      type: object
+      required: [title, type]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 300 }
+        type: { type: string, enum: [movie, series] }
+        contentKind: { type: string, enum: [film, animation, show] }
+        originTitle: { type: string, maxLength: 300 }
+        description: { type: string, maxLength: 20000 }
+        posterUrl: { type: string, maxLength: 2000 }
+        backdropUrl: { type: string, maxLength: 2000 }
+        releaseYear: { type: integer, minimum: 1800, maximum: 2200 }
+        accessTier: { type: string, enum: [free, subscription] }
+        isKidsSafe: { type: boolean }
+        averageRating: { type: number, minimum: 0, maximum: 10 }
+    PatchMovie:
+      type: object
+      additionalProperties: false
+      properties:
+        title: { type: string, minLength: 1, maxLength: 300 }
+        originTitle: { type: [string, 'null'], maxLength: 300 }
+        description: { type: [string, 'null'], maxLength: 20000 }
+        posterUrl: { type: [string, 'null'], maxLength: 2000 }
+        backdropUrl: { type: [string, 'null'], maxLength: 2000 }
+        releaseYear: { type: [integer, 'null'], minimum: 1800, maximum: 2200 }
+        contentKind: { type: string, enum: [film, animation, show] }
+        accessTier: { type: string, enum: [free, subscription] }
+        isKidsSafe: { type: boolean }
+        averageRating: { type: number, minimum: 0, maximum: 10 }
+    CreatePlayable:
+      type: object
+      required: [kind, label]
+      properties:
+        kind: { type: string, enum: [movie, episode] }
+        seasonId: { type: string, format: uuid }
+        episodeNumber: { type: integer, minimum: 1 }
+        label: { type: string, minLength: 1, maxLength: 200 }
+        sortOrder: { type: integer, default: 0 }
+        durationSeconds: { type: integer, minimum: 1 }
+    CreateSource:
+      type: object
+      required: [sourceType]
+      properties:
+        sourceType: { type: string, enum: [owned, third_party] }
+        provider: { type: string, maxLength: 80 }
+        externalId: { type: string, maxLength: 200 }
+        externalSlug: { type: string, maxLength: 200 }
+        metadataLocked: { type: boolean, default: false }
+    CreateSourceItem:
+      type: object
+      required: [playableId, serverKey, serverLabel, playbackMode]
+      properties:
+        playableId: { type: string, format: uuid }
+        serverKey: { type: string, maxLength: 100 }
+        serverLabel: { type: string, maxLength: 200 }
+        externalEpisodeKey: { type: string, maxLength: 200 }
+        externalEpisodeSlug: { type: string, maxLength: 200 }
+        playbackMode: { type: string, enum: [owned_hls, external_hls, external_embed, metadata_only] }
+        sourceStatus: { type: string, enum: [unknown, available, unavailable, error], default: unknown }
+    PatchSourceItem:
+      type: object
+      additionalProperties: false
+      properties:
+        serverKey: { type: string, minLength: 1, maxLength: 100 }
+        serverLabel: { type: string, minLength: 1, maxLength: 200 }
+        externalEpisodeKey: { type: [string, 'null'], maxLength: 200 }
+        externalEpisodeSlug: { type: [string, 'null'], maxLength: 200 }
+        playableId: { type: string, format: uuid }

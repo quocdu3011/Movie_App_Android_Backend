@@ -1,6 +1,6 @@
 # Tài liệu tích hợp API KKPhim
 
-Ngày đối chiếu tài liệu gốc: **2026-09-12**. Đây là tài liệu tham khảo cho backend MovieApp, chưa phải client đã triển khai hay API đã được kiểm thử live. Nguồn chuẩn endpoint/response là [Tài liệu API KKPhim](https://kkphim.com/api-document). Schema, API nội bộ và luồng xử lý thuộc [thiết kế backend chi tiết](backend-chi-tiet.md).
+Ngày đối chiếu tài liệu gốc: **2026-09-12**. Đây là tài liệu tham khảo cho backend MovieApp. G3 đã triển khai client metadata tương thích với fixture legacy/v1 và E2E offline; chưa thực hiện smoke live với KKPhim nên endpoint/schema drift và playback/CDN compatibility vẫn cần xác minh. Nguồn chuẩn endpoint/response là [Tài liệu API KKPhim](https://kkphim.com/api-document). Schema, API nội bộ và luồng xử lý thuộc [thiết kế backend chi tiết](backend-chi-tiet.md).
 
 ## 1. Tổng quan
 
@@ -238,6 +238,13 @@ Các timeout, retry, concurrency, cache và endpoint MovieApp nằm trong mục 
 - Xác nhận ghép `pathImage`/URL ảnh theo từng response; giữ URL tuyệt đối nếu đã đầy đủ.
 - Đo response size, timeout, redirect, URL thay đổi và URI bên trong HLS manifest.
 - E2E qua Gateway với media fixture trước; smoke provider thật ghi ngày/endpoint/kết quả riêng, không xem đó là test CI.
+
+### Trạng thái adapter G3
+
+- `libs/content-provider` hiện hỗ trợ hai dạng metadata legacy/v1 đã lưu thành fixture; E2E gọi Catalog → provider fixture offline và xác nhận import/sync hoàn tất.
+- Cache chỉ chứa metadata đã chuẩn hóa và cờ khả dụng `hasHls/hasEmbed`; URL phát chỉ được đọc bởi resolver riêng, không được trả về từ public catalog hay lưu trong Catalog DB/outbox/checkpoint.
+- Các fixture chứng minh hợp đồng mà dự án hỗ trợ, không chứng minh KKPhim đang trả đúng shape tại thời điểm chạy. Không có test hosted nào gọi Internet/provider thật trong G3.
+- Smoke live đọc-only ngày 2026-09-12 dùng `npm run smoke:kkphim-live`: discovery legacy trang 1 parse được 24 mục; search v1 parse được (1–20 kết quả trong hai lượt, theo keyword); detail khớp ID/slug và chuẩn hóa thành series hoạt hình, 1 server/479 selector, rating 9.5; resolver chọn được `external_hls`. URL chỉ ở bộ nhớ resolver, không xuất hiện trong projection/log và smoke không kết nối/ghi DB. Đây là một mẫu động, không phải cam kết schema/quota/SLA; smoke không tải HLS manifest hoặc segment.
 
 ## Nguồn
 

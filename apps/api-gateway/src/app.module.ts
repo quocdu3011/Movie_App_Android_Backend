@@ -8,11 +8,12 @@ import { RoleGuard } from './auth/role.guard';
 import { GATEWAY_CONFIG, loadGatewayConfig } from './gateway.config';
 import { RequestIdMiddleware } from '@movie/shared-dto';
 import { ProfileProxyController } from './profiles/profile-proxy.controller';
+import { CatalogAdminProxyController, CatalogPublicProxyController } from './catalog/catalog-proxy.controller';
 
 const config = loadGatewayConfig();
 
 @Module({
-  controllers: [AuthProxyController, SessionController, AdminSessionController, GatewayHealthController, ProfileProxyController],
+  controllers: [AuthProxyController, SessionController, AdminSessionController, GatewayHealthController, ProfileProxyController, CatalogPublicProxyController, CatalogAdminProxyController],
   providers: [
     { provide: GATEWAY_CONFIG, useValue: config },
     JwksClient,
