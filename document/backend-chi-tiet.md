@@ -1,6 +1,6 @@
 # Thiết kế backend chi tiết — App xem phim
 
-Bản đồng bộ: **2026-09-12 / revision 4**. Đây là đặc tả thiết kế; trạng thái triển khai từng giai đoạn được ghi riêng tại mục 8.2–8.4. Phạm vi không bao gồm kiểm tra bản quyền nguồn bên thứ ba.
+Bản đồng bộ: **2026-09-12 / revision 5**. Đây là đặc tả thiết kế; trạng thái triển khai từng giai đoạn được ghi riêng tại mục 8.2–8.5. Phạm vi không bao gồm kiểm tra bản quyền nguồn bên thứ ba.
 
 ## 0. Quy ước và quyết định nền
 
@@ -159,12 +159,14 @@ Duration của nguồn ngoài có thể chưa biết: cho phép null, không gi�
 | Bảng | Dữ liệu tối thiểu |
 |---|---|
 | `plans` | `id TEXT PK`, `name`, `price NUMERIC(12,2) CHECK >=0`, `currency CHAR(3)`, `duration_days CHECK >0`, `max_concurrent_streams CHECK >0`, `max_resolution`, `active`, `version` |
-| `subscriptions` | `id UUID PK`, `user_id UUID NOT NULL`, `plan_id FK plans`, `status=pending\|active\|expired\|cancelled`, `start_at`, `end_at`, `auto_renew DEFAULT false`, snapshot tên/giới hạn gói; CHECK end > start khi có ngày |
-| `payments` | `id UUID PK` cũng là orderId, `user_id`, `subscription_id FK subscriptions`, `provider`, `amount`, `currency`, `status=pending\|success\|failed\|refunded`, `provider_transaction_id NULL`, `paid_at NULL`, `created_at`; UNIQUE `(provider,provider_transaction_id)` khi có ID |
-| `payment_requests` | `user_id`, `idempotency_key`, `request_hash`, `payment_id`; unique user/key |
+| `subscriptions` | `id UUID PK`, `user_id UUID NOT NULL`, `plan_id FK plans`, `status=pending\|active\|expired\|cancelled`, `start_at`, `end_at`, `auto_renew DEFAULT false`, `payment_expires_at`, snapshot tên/giá/tiền tệ/thời hạn/giới hạn và `version`; CHECK end > start khi có ngày |
+| `payments` | `id UUID PK` cũng là orderId, `user_id`, `subscription_id FK subscriptions`, `provider`, `payment_method`, snapshot `amount/currency`, `status=pending\|success\|failed\|expired\|reconciliation_required\|refunded`, `provider_transaction_id NULL`, `payment_expires_at`, `paid_at`, `last_reconciled_at`, `version`; UNIQUE `(provider,provider_transaction_id)` khi có ID |
+| `payment_requests` | `user_id`, `idempotency_key`, SHA-256 `request_hash`, `payment_id UNIQUE`; PK `(user_id,idempotency_key)` |
 | `purchase_guards` | `user_id UUID PK`; khóa theo user để serialize subscribe, kích hoạt và đóng order |
-| `payment_webhook_receipts` | `provider`, `event_id`, `payload_hash`, `received_at`, `processed_at`; unique provider/event |
-| `subscription_reminders` | `subscription_id`, `end_at`, `reminder_type`; unique cả ba để cron không gửi trùng |
+| `payment_webhook_receipts` | `provider`, `event_id`, raw payload SHA-256, `payment_id`, `outcome`, stored `response`, `received_at`, `processed_at`; PK `(provider,event_id)` |
+| `subscription_reminders` | `subscription_id`, `end_at`, `reminder_type`, stable `event_id`; PK subscription/endAt/type để cron không gửi trùng |
+| `mock_provider_orders` | `order_id` FK payment, amount/currency/payment method, provider status/transaction ID; cho phép đối soát trạng thái mock độc lập với local timeout |
+| `outbox_events` | Payment event envelope cùng transaction, attempts/lease/error và published timestamp sau Kafka ACK; event G4 gồm success, reconciliation_required và expiring |
 
 Các bảng nghiệp vụ có `updated_at` và NOT NULL cho dữ liệu bắt buộc. Không nhận giá/giới hạn gói từ client. Snapshot tránh thay giá/gói đang dùng khi admin sửa plan. MVP tối đa một subscription pending hoặc active/user: unique partial index trên `user_id WHERE status IN ('pending','active')`. Mua tiếp khi đang active hoặc có order pending khác trả 409; retry cùng key trả order cũ. Khóa purchase_guards trước khóa order theo cùng thứ tự ở mọi luồng, chuyển active đã hết hạn sang expired trong transaction trước khi xét mua mới. Gia hạn/chuyển gói là tính năng sau, không tự cộng dồn tiền/ngày.
 
@@ -228,7 +230,7 @@ Provider API base và domain media được cấu hình allowlist; chỉ HTTPS, 
 
 Response JSON: `{success, data, error, requestId}`; thành công `error=null`, lỗi `data=null`, error gồm `{code,message,details?}`. Danh sách nằm trong `data={items,page,pageSize,totalItems,totalPages}`; page bắt đầu 1, pageSize mặc định 20/tối đa 50, stable tie-break bằng ID. 204 không có body. Async job trả 202 + jobId; không giữ HTTP mở đến hết sync/transcode.
 
-POST tạo order/playback/upload/import dùng `Idempotency-Key`; cùng user/key/body trả cùng tài nguyên, khác body trả 409. Ràng buộc DB/lease bảo đảm gọi đồng thời không tạo trùng. API contract được sinh OpenAPI khi triển khai; các bảng route dưới đây là chuẩn hiện tại.
+POST tạo order/playback/upload/import dùng `Idempotency-Key`; cùng user/key/body trả cùng tài nguyên, khác body trả 409. Ràng buộc DB/lease bảo đảm gọi đồng thời không tạo trùng. Hợp đồng OpenAPI đã được ghi cho Catalog trong `catalog-openapi.yaml` và Payment trong `payment-openapi.yaml`; các bảng route dưới đây là chuẩn nghiệp vụ toàn hệ thống.
 
 JWT được verify ở Gateway **và service**. Nội bộ dùng credential định danh service, có audience và allowlist caller theo endpoint; user JWT gốc được chuyển tiếp khi cần kiểm tra ownership. Chặn `/internal/*` ở Gateway; không tin `X-User-Id` do client gửi. Chỉ Auth giữ private key user JWT. Các header auth/token/cookie/URL có query phải redact.
 
@@ -447,6 +449,7 @@ Envelope `{eventId,eventType,schemaVersion,aggregateId,aggregateVersion,occurred
 | `video.transcode_failed` | Worker | Streaming, Notification | assetId, generation, errorCode |
 | `video.ready` | Streaming | Catalog | assetId, sourceItemId, generation |
 | `payment.success` | Payment | Notification | userId, subscriptionId, paymentId |
+| `payment.reconciliation_required` | Payment | Chưa có consumer; vận hành/đối soát sau này | paymentId, subscriptionId, userId, providerTransactionId |
 | `subscription.expiring` | Payment | Notification | userId, subscriptionId, endAt, reminderType |
 | `profile.deleted` | Profile | Streaming, Recommendation | profileId, userId |
 | `playback.qualified` | Streaming | Recommendation | sessionId, profileId, movieId, occurredAt |
@@ -487,7 +490,7 @@ Một qualified view: session báo xem tích lũy tối thiểu 30 giây, event 
 | Đếm progress thành lượt xem | qualified view unique session | Một session nhiều progress chỉ một view |
 | CI/CD trước E2E và path filter bỏ sót libs | E2E trước deploy, dependency-aware checks | Thay shared lib/lockfile kích hoạt checks |
 
-Các hợp đồng đã được đối chiếu ở mức tài liệu. G0–G3 hiện có code và bằng chứng tương ứng tại mục 8.2–8.4; các service business còn lại vẫn cần kiểm tra theo từng giai đoạn. Chưa có kết quả test tải hoặc chứng minh provider/CDN tương thích thật; các tiêu chí đó nằm trong TODO, không được đánh dấu hoàn thành chỉ vì đã viết thiết kế.
+Các hợp đồng đã được đối chiếu ở mức tài liệu. G0–G4 hiện có code và bằng chứng tương ứng tại mục 8.2–8.5; các service business còn lại vẫn cần kiểm tra theo từng giai đoạn. Chưa có kết quả test tải hoặc chứng minh provider/CDN tương thích thật; các tiêu chí đó nằm trong TODO, không được đánh dấu hoàn thành chỉ vì đã viết thiết kế.
 
 ### 8.2. G0 implementation và bằng chứng nghiệm thu hiện tại
 
@@ -496,7 +499,7 @@ Các hợp đồng đã được đối chiếu ở mức tài liệu. G0–G3 h
 - Compose có ba profile, named volumes, cổng host bind loopback và healthcheck dịch vụ. PostgreSQL bootstrap tạo/tái sử dụng tám database/user; Kafka dùng `--if-not-exists`; MinIO tạo hai bucket riêng tư idempotent. Kafka dev một broker chỉ có replication factor 1.
 - CI-equivalent trên Node 24.21.0: `npm ci`, lint, typecheck, build, unit tests, HTTP smoke cho Gateway + các service chưa đến giai đoạn, và các E2E theo từng giai đoạn đều pass. G0 smoke xác nhận startup, health/readiness, request ID, error envelope, Gateway fail-closed khi Auth không sẵn sàng và startup lỗi khi thiếu `NODE_ENV`; Catalog readiness/business được kiểm tra trong G3 E2E sau khi PostgreSQL đã sẵn sàng.
 - PostgreSQL bootstrap đã tạo đủ tám database/user và chạy lại lần hai không lỗi trên cluster tạm PostgreSQL 16.15. Cluster tạm đã dừng; cluster hệ thống không bị thay đổi.
-- Sau khi cài Docker Engine, Compose core được chạy lại ngày 2026-09-12: PostgreSQL 16.4, Redis 7.4.2 và Kafka 4.2.0 healthy; bootstrap tám DB/user và 13 topic chạy liên tiếp hai lượt thành công. Persistence sau restart đã được kiểm tra trong G0 acceptance trước đó. GitHub Actions hosted chưa được trigger vì worktree chưa push và xác thực `gh` không khả dụng; không ghi kết quả local thành CI remote.
+- Sau khi cài Docker Engine, Compose core được chạy lại ngày 2026-09-12: PostgreSQL 16.4, Redis 7.4.2 và Kafka 4.2.0 healthy; bootstrap tám DB/user và 14 topic chạy liên tiếp hai lượt thành công. Persistence sau restart đã được kiểm tra trong G0 acceptance trước đó. GitHub Actions hosted chưa được trigger vì worktree chưa push và xác thực `gh` không khả dụng; không ghi kết quả local thành CI remote.
 - Host Node 26.7.0 không được dùng làm bằng chứng tương thích; toàn bộ code check và E2E ở đây chạy trong image Node 24.21.0.
 
 ### 8.3. G2 Profile core — implementation và bằng chứng local
@@ -517,5 +520,13 @@ Các hợp đồng đã được đối chiếu ở mức tài liệu. G0–G3 h
 - Admin import/search/discovery/refresh và sync-run status đã được thêm. Job được lưu trong PostgreSQL, worker claim bằng lease/`SKIP LOCKED`, checkpoint theo trang/selector, reclaim lease hết hạn và bounded discovery. Upsert dùng provider external ID, slug thay được, không xóa bản ghi vì discovery vắng mặt, không merge theo tên. `metadata_locked` khóa trường biên tập nhưng vẫn cập nhật selector/availability; auto-publish không mở lại phim archived. Mapping source item kiểm tra cùng movie, giữ playable ID và ghi audit.
 - Catalog outbox dùng producer Kafka và chỉ đánh `published_at` sau broker ACK. Public response, Catalog DB, checkpoint và event envelope được E2E kiểm tra không chứa fixture playback URLs. Owned source item mới tạo giữ `unknown`; trạng thái sẵn sàng do Streaming G6 xác nhận.
 - Bằng chứng local trên Node `24.21.0` với PostgreSQL/Kafka Compose: `npm ci`, `npm run lint`, `npm run typecheck`, `npm run build`, `npm run test:unit`, G0 HTTP smoke, G1 Auth E2E, G2 Profile E2E và `npm run smoke:catalog-ci` exit code 0. G3 E2E khởi động Auth/Gateway/Profile/Catalog thật, dùng KKPhim HTTP fixture offline và kiểm tra role, hai nguồn, mapping, profile/kids, lock/archive/slug, lease recovery/checkpoint, DB/public URL isolation và Kafka outbox ACK. GitHub Actions workflow gọi smoke Catalog sau bootstrap; kết quả hosted chưa được quan sát do cần push/trigger.
+
+### 8.5. G4 Payment mock và entitlement — implementation và bằng chứng local
+
+- Migration `CreatePaymentSchema1700000000004` tạo 9 bảng nghiệp vụ/hạ tầng: plans, purchase guards, subscriptions, payments, idempotency requests, webhook receipts, reminders, mock provider orders và outbox. CHECK constraints cùng unique partial indexes bảo vệ status, tiền tệ/giá, một pending/active subscription mỗi user, provider transaction và webhook event. Seed demo chạy idempotent ngoài production. `synchronize` không được bật.
+- Payment service cung cấp plans, subscribe, current, webhook và internal entitlement; Gateway proxy nối các route public, JWT/session và `Idempotency-Key`. Webhook giữ nguyên raw bytes đến Payment. Internal entitlement chỉ nhận caller `streaming-service`; giá/tiền tệ/thời hạn/giới hạn được snapshot server-side; free limits cấu hình mặc định một stream/720p. Mock HMAC chỉ được bật ở development/test và startup production từ chối `PAYMENT_MOCK_ENABLED=true`.
+- Mua gói khóa purchase guard theo user, so sánh request hash cho idempotency, tạo subscription/payment pending trong transaction rồi khởi tạo order mock sau commit. Webhook verify HMAC constant-time, ràng buộc provider/order/amount/currency, khóa state và receipt, CAS activation, không downgrade khi failed đến sau success, ghi transactional outbox; publisher chỉ đánh ACK sau khi Kafka xác nhận. Job chỉ đóng pending khi mock provider xác nhận failed/expired; hết hạn theo `endAt` được áp dụng trực tiếp lúc đọc entitlement, không phụ thuộc cron. Reminder ba ngày dedupe theo subscription/endAt/type.
+- Late success sau khi payment/subscription đã đóng được lưu thành `reconciliation_required`, phát event riêng và không cấp entitlement chồng. Trạng thái này cần quy trình đối soát vận hành ở phase thanh toán provider thật; mock không thực hiện refund hoặc giao dịch tiền thật.
+- Bằng chứng trên Node 24.21.0 với PostgreSQL/Kafka Compose: `npm run smoke:payment-ci` exit code 0. Smoke tạo DB PostgreSQL tạm mới, chạy migration từ đầu, xác nhận 9 bảng/seed/CHECK constraint rồi xóa DB probe. E2E khởi động Auth/Gateway/Payment thật; kiểm tra production mock guard, free và paid entitlement, idempotent retry/key conflict, hai key cạnh tranh, HMAC trên payload raw có whitespace, chữ ký/order/số tiền/provider sai, webhook đồng thời và trùng event, một lần activation, Kafka outbox ACK, snapshot giá/limits và endAt bất biến, expiry/reminder dedupe, cho mua lại sau khi active subscription hết hạn, pending timeout không tự coi là failed, provider-confirmed failure và late success reconciliation không kích hoạt. Hợp đồng request/response được ghi trong [payment-openapi.yaml](payment-openapi.yaml). Workflow gọi `smoke:payment-ci`; GitHub Actions hosted chưa được push/trigger, nên đây là bằng chứng local chứ không phải CI hosted.
 
 Tham khảo kỹ thuật: [NestJS workspace](https://docs.nestjs.com/cli/monorepo), [PostgreSQL constraints](https://www.postgresql.org/docs/current/ddl-constraints.html), [TypeORM migrations](https://typeorm.io/docs/advanced-topics/migrations/), [Apache Kafka Docker image](https://kafka.apache.org/42/getting-started/docker/), [MinIO health probes](https://min.io/docs/minio/linux/operations/monitoring/healthcheck-probe.html), [OAuth refresh-token security](https://www.rfc-editor.org/rfc/rfc9700.html), [CloudFront signed cookies](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-choosing-signed-urls-cookies.html). Các quyết định domain/TTL/thứ tự giai đoạn là thiết kế của dự án, không phải yêu cầu từ những tài liệu ngoài này.

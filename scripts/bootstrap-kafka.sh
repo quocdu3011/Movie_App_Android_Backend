@@ -13,7 +13,7 @@ fi
 topics=(
   movie.published movie.updated movie.archived movie.source.updated
   video.uploaded video.processing video.transcoded video.transcode_failed video.ready
-  payment.success subscription.expiring profile.deleted playback.qualified
+  payment.success payment.reconciliation_required subscription.expiring profile.deleted playback.qualified
 )
 
 for topic in "${topics[@]}"; do

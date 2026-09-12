@@ -1,8 +1,8 @@
 # TODO và prompt triển khai backend — App xem phim
 
-Bản đồng bộ: **2026-09-12 / revision 7**. Checklist chưa tick là việc chưa có bằng chứng nghiệm thu. G0–G3 đã qua nghiệm thu local end-to-end trên Node 24.21.0 và PostgreSQL/Kafka Compose. Workflow GitHub Actions có kiểm tra Catalog; hosted result chỉ được xác nhận sau khi push/trigger CI. Tài liệu tách rõ bằng chứng local khỏi kết quả CI hosted.
+Bản đồng bộ: **2026-09-12 / revision 8**. Checklist chưa tick là việc chưa có bằng chứng nghiệm thu. G0–G4 đã qua nghiệm thu local end-to-end trên Node 24.21.0 và PostgreSQL/Kafka Compose. Workflow GitHub Actions gọi smoke Catalog và Payment; hosted result chỉ được xác nhận sau khi push/trigger CI. Tài liệu tách rõ bằng chứng local khỏi kết quả CI hosted.
 
-Đọc [thiết kế app](thiet-ke-app-xem-phim.md), [thiết kế backend chi tiết](backend-chi-tiet.md) và [tài liệu tích hợp KKPhim](kkphim-api.md) trước các giai đoạn liên quan. Backend chi tiết là nguồn chuẩn schema/API/event của MovieApp; tài liệu KKPhim là tham chiếu endpoint/response của provider; TODO không định nghĩa schema cạnh tranh.
+Đọc [thiết kế app](thiet-ke-app-xem-phim.md), [thiết kế backend chi tiết](backend-chi-tiet.md), [hợp đồng Payment OpenAPI](payment-openapi.yaml) và [tài liệu tích hợp KKPhim](kkphim-api.md) trước các giai đoạn liên quan. Backend chi tiết là nguồn chuẩn schema/API/event của MovieApp; OpenAPI ghi request/response cho các route đã nghiệm thu; tài liệu KKPhim là tham chiếu endpoint/response của provider; TODO không định nghĩa schema cạnh tranh.
 
 ## 1. Cách thực hiện và quy tắc nghiệm thu
 
@@ -41,7 +41,7 @@ Gateway được mở rộng trong từng giai đoạn, không đợi cuối m�
 - [x] PostgreSQL bootstrap tạo/tái sử dụng 8 database/user, chạy lặp trên PostgreSQL 16.15 tạm và PostgreSQL 16.4 Compose.
 - [x] Compose core health, Kafka topic bootstrap, Redis/Kafka/PostgreSQL persistence sau restart đã chạy thành công.
 - [x] Media profile MinIO health/bucket bootstrap đã chạy và được xác nhận.
-- [x] Health/readiness, requestId, shared response/error/config và route skeleton; HTTP smoke cho Gateway + năm service chưa đến giai đoạn đã pass, Profile được nghiệm thu ở G2 và Catalog ở G3 sau khi DB sẵn sàng.
+- [x] Health/readiness, requestId, shared response/error/config và route skeleton; HTTP smoke cho Gateway + bốn service chưa đến giai đoạn đã pass, Profile được nghiệm thu ở G2, Catalog ở G3 và Payment ở G4 sau khi DB sẵn sàng.
 - [x] Tạo CI lint/typecheck/unit/build và core infrastructure acceptance workflow tại Git root `Backend/`.
 - [x] CI-equivalent code checks chạy xanh trên Node 24.21.0; core Compose acceptance chạy xanh local.
 - [ ] GitHub Actions remote chạy xanh trên Node 24.21.0; chưa trigger vì working tree chưa được push và `gh auth status` báo token không hợp lệ.
@@ -75,7 +75,7 @@ Báo version đã chọn và resource footprint để cập nhật thiết kế 
 
 **Nghiệm thu:** clean install/build từng app; Compose core sẵn sàng và restart không mất dữ liệu; init chạy lại không tạo trùng; config thiếu báo lỗi; CI chạy được. Chưa cần credential/provider thật.
 
-**Bằng chứng local 2026-09-12:** Trong image `node:24.21.0-bookworm-slim`, `npm ci`, lint, typecheck, build, 4 unit tests và HTTP smoke đều pass (8 service skeleton + thiếu config bắt buộc). Compose Engine 29.8.0/Compose v5.5.1: PostgreSQL 16.4, Redis 7.4.2 và Kafka 4.2.0 healthy; bootstrap tạo 8 database/user và 13 Kafka topics, lặp lại trước lẫn sau restart không lỗi. Marker PostgreSQL, Redis AOF và 13 topic còn sau khi restart cả 3 container. Profile media (OpenSearch 2.19.1, MinIO và media-edge) và observability (Prometheus, Grafana, Loki) đều healthy; MinIO bootstrap chạy lặp, tạo hai bucket và đặt quyền private. Auth/Gateway migration + E2E pass trên PostgreSQL Compose; sau lượt đầu, migration báo không còn migration chờ và smoke xác nhận uniqueness, password, refresh replay race, device cap, user/admin guards, logout và banned-user revoke. Vì host đang dùng cổng 6379, `.env` local (được `.gitignore` loại trừ) dùng PostgreSQL 15432/Redis 16379; các port nội bộ container giữ nguyên. GitHub Actions workflow chưa chạy trên remote: worktree còn thay đổi chưa push và `gh auth status` báo token không hợp lệ. MinIO bootstrap được sửa sau khi Docker pull `minio/mc` thất bại: custom image dùng client `mc` đi kèm image MinIO server đã pin, với `MC_CONFIG_DIR` writable; build và bootstrap sau sửa đã pass.
+**Bằng chứng local 2026-09-12:** Trong image `node:24.21.0-bookworm-slim`, `npm ci`, lint, typecheck, build, 4 unit tests và HTTP smoke đều pass (8 service skeleton + thiếu config bắt buộc). Compose Engine 29.8.0/Compose v5.5.1: PostgreSQL 16.4, Redis 7.4.2 và Kafka 4.2.0 healthy; bootstrap G0 ban đầu tạo 8 database/user và 13 Kafka topics, lặp lại trước lẫn sau restart không lỗi. Marker PostgreSQL, Redis AOF và 13 topic đó còn sau khi restart cả 3 container; G4 bổ sung topic `payment.reconciliation_required`, nên bootstrap hiện tại có 14 topic. Profile media (OpenSearch 2.19.1, MinIO và media-edge) và observability (Prometheus, Grafana, Loki) đều healthy; MinIO bootstrap chạy lặp, tạo hai bucket và đặt quyền private. Auth/Gateway migration + E2E pass trên PostgreSQL Compose; sau lượt đầu, migration báo không còn migration chờ và smoke xác nhận uniqueness, password, refresh replay race, device cap, user/admin guards, logout và banned-user revoke. Vì host đang dùng cổng 6379, `.env` local (được `.gitignore` loại trừ) dùng PostgreSQL 15432/Redis 16379; các port nội bộ container giữ nguyên. GitHub Actions workflow chưa chạy trên remote: worktree còn thay đổi chưa push và `gh auth status` báo token không hợp lệ. MinIO bootstrap được sửa sau khi Docker pull `minio/mc` thất bại: custom image dùng client `mc` đi kèm image MinIO server đã pin, với `MC_CONFIG_DIR` writable; build và bootstrap sau sửa đã pass.
 
 ## G1 — Auth và Gateway auth
 
@@ -175,10 +175,10 @@ Cron mặc định dev tắt, seed/fixtures đủ movie lẻ/series và cả hai
 
 ## G4 — Payment mock và entitlement
 
-- [ ] Migrations plans/subscriptions/payments/requests/receipts/reminders/purchase_guards.
-- [ ] Snapshot giá/giới hạn và subscription lifecycle.
-- [ ] HMAC mock webhook, idempotency transaction/CAS/outbox.
-- [ ] Entitlement nội bộ, free/subscription, cron expiry/reminder dedupe.
+- [x] Migrations plans/subscriptions/payments/requests/receipts/reminders/purchase_guards.
+- [x] Snapshot giá/giới hạn và subscription lifecycle.
+- [x] HMAC mock webhook, idempotency transaction/CAS/outbox.
+- [x] Entitlement nội bộ, free/subscription, cron expiry/reminder dedupe.
 
 **Prompt:**
 
@@ -202,6 +202,8 @@ Mock config production phải fail startup. Test DB concurrency, không chỉ mo
 ```
 
 **Nghiệm thu:** hai webhook đồng thời chỉ cấp một subscription/payment.success; chữ ký/tiền/provider/order sai không kích hoạt; webhook failed đến sau paid không hạ trạng thái; retry subscribe cùng key không tạo order mới; hai key cạnh tranh không tạo hai pending; pending bỏ dở được đối soát và late success không bị mất; plan đổi không sửa snapshot cũ; expired bị từ chối dù cron chưa chạy; reminder không phát mỗi ngày cho cùng lần hết hạn.
+
+**Kết quả local 2026-09-12:** Migration Payment đã chạy trên `payment_db` PostgreSQL Compose và trên database tạm hoàn toàn mới do E2E tạo rồi xóa; kiểm tra đủ 9 bảng G4, seed demo và CHECK constraint giá. Node 24.21.0 `npm run smoke:payment-ci` exit code 0: cấu hình mock bị từ chối khi production, Auth/Gateway/Payment readiness, plan và giá server-side, retry/idempotency và open-order guard, raw-body HMAC với payload whitespace-preserving, signature/order/amount/provider lỗi, webhook đồng thời và receipt dedupe, một lần kích hoạt/outbox Kafka ACK, failed-after-paid, snapshot bất biến và `autoRenew=false`, internal Streaming-only entitlement/free limits, hết hạn theo `endAt` trước cron, reminder dedupe, cho mua lại sau khi subscription hết hạn, pending timeout không tự thành failed, provider-confirmed failure, late success vào `reconciliation_required` không cấp entitlement, hai idempotency key cạnh tranh chỉ có một order. Local E2E đã chạy trên PostgreSQL/Kafka Compose; hosted GitHub Actions chưa được trigger trong phiên này.
 
 ## G5 — Phiên phát KKPhim và progress
 

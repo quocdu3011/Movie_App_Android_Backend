@@ -8,7 +8,7 @@ import { loadGatewayConfig } from './gateway.config';
 
 async function bootstrap(): Promise<void> {
   const config = loadGatewayConfig();
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create(AppModule, { bufferLogs: true, rawBody: true });
   app.use(helmet());
   app.enableCors({ origin: config.origins, credentials: false, methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'] });
   app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }));

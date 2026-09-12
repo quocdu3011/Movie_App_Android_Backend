@@ -9,11 +9,12 @@ import { GATEWAY_CONFIG, loadGatewayConfig } from './gateway.config';
 import { RequestIdMiddleware } from '@movie/shared-dto';
 import { ProfileProxyController } from './profiles/profile-proxy.controller';
 import { CatalogAdminProxyController, CatalogPublicProxyController } from './catalog/catalog-proxy.controller';
+import { PaymentWebhookProxyController, SubscriptionProxyController } from './payments/payment-proxy.controller';
 
 const config = loadGatewayConfig();
 
 @Module({
-  controllers: [AuthProxyController, SessionController, AdminSessionController, GatewayHealthController, ProfileProxyController, CatalogPublicProxyController, CatalogAdminProxyController],
+  controllers: [AuthProxyController, SessionController, AdminSessionController, GatewayHealthController, ProfileProxyController, CatalogPublicProxyController, CatalogAdminProxyController, SubscriptionProxyController, PaymentWebhookProxyController],
   providers: [
     { provide: GATEWAY_CONFIG, useValue: config },
     JwksClient,

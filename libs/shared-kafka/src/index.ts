@@ -9,6 +9,7 @@ export const MOVIEAPP_TOPICS = [
   'video.transcode_failed',
   'video.ready',
   'payment.success',
+  'payment.reconciliation_required',
   'subscription.expiring',
   'profile.deleted',
   'playback.qualified',

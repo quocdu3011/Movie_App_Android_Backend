@@ -1,0 +1,288 @@
+openapi: 3.1.0
+info:
+  title: MovieApp Payment API
+  version: 0.1.0
+  description: >-
+    G4 subscription and entitlement contract. Public operations are exposed by
+    API Gateway. The entitlement operation is internal to the service network.
+servers:
+  - url: http://localhost:3000
+    description: Local API Gateway
+tags:
+  - name: Subscriptions
+  - name: Payment Webhook
+  - name: Internal Entitlement
+security: []
+paths:
+  /subscriptions/plans:
+    get:
+      tags: [Subscriptions]
+      summary: List active subscription plans
+      responses:
+        '200':
+          description: Active plans available for purchase
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [items]
+                        properties:
+                          items:
+                            type: array
+                            items: { $ref: '#/components/schemas/Plan' }
+  /subscriptions/subscribe:
+    post:
+      tags: [Subscriptions]
+      summary: Create or replay a mock payment order
+      description: >-
+        The authenticated user comes from the Gateway-validated session. The
+        server reads amount, currency and limits from the selected active plan;
+        client supplied prices are rejected. Reusing the same idempotency key
+        and body returns the original order. A different body or another open
+        purchase returns 409.
+      security: [{ userBearer: [] }]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 120, pattern: '^[A-Za-z0-9._:-]+$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SubscribeRequest' }
+      responses:
+        '201':
+          description: Pending payment order or idempotent replay
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/PaymentOrder' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Active plan does not exist }
+        '409': { description: Idempotency key conflicts or user already has an open subscription/payment }
+        '503': { description: Mock payment provider is disabled or unavailable }
+  /subscriptions/current:
+    get:
+      tags: [Subscriptions]
+      summary: Read the authenticated user's current subscription or pending order
+      security: [{ userBearer: [] }]
+      responses:
+        '200':
+          description: Current subscription/order, or null when none is open
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        oneOf:
+                          - $ref: '#/components/schemas/CurrentSubscription'
+                          - type: 'null'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /payments/webhook/{provider}:
+    post:
+      tags: [Payment Webhook]
+      summary: Receive a signed provider event
+      description: >-
+        The Gateway forwards the exact raw request bytes without JSON
+        re-serialization. For the G4 mock, sign those bytes with HMAC-SHA256
+        using the configured mock secret and send
+        `x-payment-signature: sha256=<lowercase hex digest>`. This endpoint
+        does not accept a user JWT. Signature, provider, order, amount and
+        currency are verified before the transactional state change.
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema: { type: string, enum: [mock] }
+        - name: x-payment-signature
+          in: header
+          required: true
+          schema: { type: string, pattern: '^sha256=[a-f0-9]{64}$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MockWebhook' }
+      responses:
+        '200':
+          description: Event acknowledged; response identifies success, ignored or reconciliation_required state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuccessEnvelope' }
+        '400': { description: Invalid JSON, body size or required webhook fields }
+        '401': { description: Missing or invalid HMAC signature }
+        '404': { description: Provider or order not found }
+        '409': { description: Provider, amount, currency, event ID or provider transaction conflicts }
+  /internal/subscriptions/users/{userId}/entitlement:
+    get:
+      servers:
+        - url: http://payment-service:3004
+          description: Private service-network endpoint; never expose directly to mobile clients
+      tags: [Internal Entitlement]
+      summary: Read effective stream entitlement for a user
+      description: >-
+        Only the Streaming service is allowed. Active means status=active and
+        endAt is strictly greater than the database current time. Otherwise
+        the response contains the configured free-tier limits even if the
+        expiry maintenance job has not run yet.
+      security: [{ serviceBearer: [], callerService: [] }]
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: x-caller-service
+          in: header
+          required: true
+          schema: { type: string, enum: [streaming-service] }
+      responses:
+        '200':
+          description: Effective subscription or free tier limits
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Entitlement' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+components:
+  securitySchemes:
+    userBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    serviceBearer:
+      type: http
+      scheme: bearer
+      description: Per-caller internal service token
+    callerService:
+      type: apiKey
+      in: header
+      name: x-caller-service
+  schemas:
+    SuccessEnvelope:
+      type: object
+      required: [success, data, error, requestId]
+      properties:
+        success: { type: boolean, const: true }
+        data: {}
+        error: { type: 'null' }
+        requestId: { type: string }
+    Plan:
+      type: object
+      required: [id, name, price, currency, durationDays, maxConcurrentStreams, maxResolution, version]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        price: { type: number, minimum: 0 }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        durationDays: { type: integer, minimum: 1 }
+        maxConcurrentStreams: { type: integer, minimum: 1 }
+        maxResolution: { type: string }
+        version: { type: integer, minimum: 1 }
+    SubscribeRequest:
+      type: object
+      additionalProperties: false
+      required: [planId, paymentMethod]
+      properties:
+        planId: { type: string, minLength: 1, maxLength: 80 }
+        paymentMethod: { type: string, enum: [card, wallet, bank_transfer] }
+    PlanSnapshot:
+      type: object
+      required: [name, price, currency, durationDays, maxConcurrentStreams, maxResolution]
+      properties:
+        name: { type: string }
+        price: { type: number, minimum: 0 }
+        currency: { type: string }
+        durationDays: { type: integer }
+        maxConcurrentStreams: { type: integer }
+        maxResolution: { type: string }
+    PaymentOrder:
+      type: object
+      required: [paymentId, orderId, subscriptionId, status, paymentExpiresAt, amount, currency, paymentMethod, planSnapshot, provider, idempotentReplay, requestId]
+      properties:
+        paymentId: { type: string, format: uuid }
+        orderId: { type: string, format: uuid }
+        subscriptionId: { type: string, format: uuid }
+        status: { type: string, enum: [pending, success, failed, expired, reconciliation_required, refunded] }
+        paymentExpiresAt: { type: string, format: date-time }
+        amount: { type: number, minimum: 0 }
+        currency: { type: string }
+        paymentMethod: { type: string, enum: [card, wallet, bank_transfer] }
+        planSnapshot: { $ref: '#/components/schemas/PlanSnapshot' }
+        provider:
+          type: object
+          required: [name, orderId, status]
+          properties:
+            name: { type: string, const: mock }
+            orderId: { type: string, format: uuid }
+            status: { type: string }
+        idempotentReplay: { type: boolean }
+        requestId: { type: string }
+    CurrentSubscription:
+      type: object
+      required: [subscriptionId, status, startAt, endAt, autoRenew, plan, payment]
+      properties:
+        subscriptionId: { type: string, format: uuid }
+        status: { type: string, enum: [pending, active] }
+        startAt: { type: [string, 'null'], format: date-time }
+        endAt: { type: [string, 'null'], format: date-time }
+        autoRenew: { type: boolean, const: false }
+        plan: { $ref: '#/components/schemas/PlanSnapshot' }
+        payment:
+          type: object
+          properties:
+            paymentId: { type: string, format: uuid }
+            status: { type: string }
+            method: { type: string }
+            expiresAt: { type: string, format: date-time }
+            createdAt: { type: string, format: date-time }
+    MockWebhook:
+      type: object
+      additionalProperties: false
+      required: [eventId, orderId, status, amount, currency]
+      properties:
+        eventId: { type: string, minLength: 1, maxLength: 200 }
+        orderId: { type: string, format: uuid }
+        status: { type: string, enum: [success, failed, expired] }
+        amount: { type: [string, number] }
+        currency: { type: string, pattern: '^[A-Za-z]{3}$' }
+        providerTransactionId: { type: string, maxLength: 200 }
+    Entitlement:
+      type: object
+      required: [hasSubscription, tier, subscriptionId, planId, planName, startAt, endAt, limits]
+      properties:
+        hasSubscription: { type: boolean }
+        tier: { type: string, enum: [free, subscription] }
+        subscriptionId: { type: [string, 'null'], format: uuid }
+        planId: { type: [string, 'null'] }
+        planName: { type: [string, 'null'] }
+        startAt: { type: [string, 'null'], format: date-time }
+        endAt: { type: [string, 'null'], format: date-time }
+        limits:
+          type: object
+          required: [maxConcurrentStreams, maxResolution]
+          properties:
+            maxConcurrentStreams: { type: integer, minimum: 1 }
+            maxResolution: { type: string }
+  responses:
+    Unauthorized:
+      description: Authentication or internal service token is missing/invalid
+    Forbidden:
+      description: Authenticated service is not allowed to read entitlements
