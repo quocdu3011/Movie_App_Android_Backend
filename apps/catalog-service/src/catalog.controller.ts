@@ -5,11 +5,11 @@ import {
 import { Request } from 'express';
 import { successEnvelope } from '@movie/shared-dto';
 import { CatalogService } from './catalog.service';
-import { CatalogGatewayGuard } from './catalog-auth.guard';
+import { CatalogGatewayGuard, CatalogStreamingGuard } from './catalog-auth.guard';
 import {
   CatalogQueryDto, CreateContentSourceDto, CreateMovieDto, CreatePlayableDto, CreateSeasonDto,
   CreateSourceItemDto, ImportProviderDto, MetadataLockDto, PatchMovieDto, PatchSourceItemDto,
-  SearchProviderQueryDto, SyncProviderDto,
+  SearchProviderQueryDto, SourceItemStatusDto, SyncProviderDto,
 } from './catalog.dto';
 
 interface CatalogRequest extends Request { requestId?: string }
@@ -114,4 +114,37 @@ export class CatalogHealthController {
   health(@Req() request: CatalogRequest) { return successEnvelope({ status: 'ok', service: 'catalog-service' }, request.requestId ?? 'unknown'); }
   @Get('ready')
   async ready(@Req() request: CatalogRequest) { await this.catalog.pingDatabase(); return successEnvelope({ status: 'ready', service: 'catalog-service', businessImplemented: true }, request.requestId ?? 'unknown'); }
+}
+
+@Controller('internal/catalog')
+@UseGuards(CatalogStreamingGuard)
+export class CatalogStreamingController {
+  constructor(private readonly catalog: CatalogService) {}
+
+  @Get('playables/:playableId')
+  async playbackSelection(
+    @Param('playableId', new ParseUUIDPipe()) playableId: string,
+    @Query('sourceItemId', new ParseUUIDPipe()) sourceItemId: string,
+  ) {
+    return successEnvelope(await this.catalog.playbackSelection(playableId, sourceItemId));
+  }
+
+  @Post('source-items/:sourceItemId/status')
+  async reportStatus(
+    @Param('sourceItemId', new ParseUUIDPipe()) sourceItemId: string,
+    @Body() body: SourceItemStatusDto,
+    @Req() request: CatalogRequest,
+  ) {
+    return successEnvelope(await this.catalog.reportSourceStatus(sourceItemId, body.status, body.retryAfter ?? null, request.requestId ?? 'unknown'), request.requestId ?? 'unknown');
+  }
+
+  @Get('owned-source-items/:sourceItemId')
+  async ownedSourceItem(@Param('sourceItemId', new ParseUUIDPipe()) sourceItemId: string) {
+    return successEnvelope(await this.catalog.ownedSourceItem(sourceItemId));
+  }
+
+  @Post('owned-source-items/:sourceItemId/ready')
+  async ownedReady(@Param('sourceItemId', new ParseUUIDPipe()) sourceItemId: string, @Req() request: CatalogRequest) {
+    return successEnvelope(await this.catalog.markOwnedReady(sourceItemId, request.requestId ?? 'unknown'), request.requestId ?? 'unknown');
+  }
 }

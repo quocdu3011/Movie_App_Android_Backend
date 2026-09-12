@@ -143,17 +143,26 @@ services:
     restart: "no"
 
   media-edge:
-    image: nginx:1.27.4-alpine
+    build:
+      context: .
+      dockerfile: docker/media-edge/Dockerfile
+    image: movieapp/media-edge:dev
     profiles: [media]
     depends_on:
       minio:
         condition: service_healthy
     ports:
-      - "127.0.0.1:${MEDIA_EDGE_PORT:-8081}:8080"
-    volumes:
-      - ./docker/media-edge/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - "127.0.0.1:${MEDIA_EDGE_PORT:-8081}:8081"
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      MEDIA_EDGE_PORT: 8081
+      MEDIA_AUTH_SECRET: ${MEDIA_AUTH_SECRET:?Set MEDIA_AUTH_SECRET in Backend/.env}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-movieapp_minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-movieapp_minio_dev_only}
+      MINIO_BUCKET_MEDIA: ${MINIO_BUCKET_MEDIA:-movieapp-media}
     healthcheck:
-      test: [CMD-SHELL, 'wget -qO- http://127.0.0.1:8080/health >/dev/null']
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8081/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 10s
       timeout: 3s
       retries: 10

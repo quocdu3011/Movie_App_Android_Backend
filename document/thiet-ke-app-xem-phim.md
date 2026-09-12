@@ -1,6 +1,6 @@
 # Thiết kế chi tiết app xem phim trên Android
 
-Bản đồng bộ: **2026-09-12 / revision 4**. Tài liệu mô tả sản phẩm và kiến trúc; tiến độ triển khai được ghi trong backend TODO. Phạm vi không bao gồm kiểm tra bản quyền nguồn bên thứ ba.
+Bản đồng bộ: **2026-09-12 / revision 5**. Tài liệu mô tả sản phẩm và kiến trúc; tiến độ cùng bằng chứng triển khai được ghi trong backend TODO. Phạm vi không bao gồm kiểm tra bản quyền nguồn bên thứ ba.
 
 [Thiết kế backend chi tiết](backend-chi-tiet.md) là nguồn chuẩn của schema, API nội bộ và sự kiện. [Hợp đồng Payment OpenAPI](payment-openapi.yaml) mô tả route subscription/entitlement đã nghiệm thu. [Tài liệu tích hợp KKPhim](kkphim-api.md) mô tả endpoint/response từ provider. [TODO và prompt backend](todo-prompt-backend.md) là lộ trình thực hiện. Khi thay đổi hợp đồng dự án, cập nhật phần sản phẩm và TODO liên quan.
 

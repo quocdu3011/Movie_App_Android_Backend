@@ -4,6 +4,8 @@
   "references": [
     { "path": "../../libs/shared-config" },
     { "path": "../../libs/shared-dto" }
+    ,{ "path": "../../libs/shared-kafka" }
+    ,{ "path": "../../libs/object-storage" }
   ],
   "include": ["src/**/*.ts"]
 }

@@ -71,6 +71,90 @@ export class CatalogService {
 
   async pingDatabase(): Promise<void> { await this.dataSource.query('SELECT 1'); }
 
+  async playbackSelection(playableId: string, sourceItemId: string) {
+    const rows = await this.dataSource.query(`
+      SELECT m.id AS "movieId",m.status AS "movieStatus",m.access_tier AS "accessTier",m.is_kids_safe AS "isKidsSafe",
+        p.id AS "playableId",p.kind AS "playableKind",p.label AS "playableLabel",p.duration_seconds AS "durationSeconds",
+        cs.id AS "sourceId",cs.source_type AS "sourceType",cs.provider,cs.external_slug AS "externalSlug",
+        si.id AS "sourceItemId",si.server_key AS "serverKey",si.server_label AS "serverLabel",
+        si.external_episode_key AS "externalEpisodeKey",si.external_episode_slug AS "externalEpisodeSlug",
+        si.playback_mode AS "playbackMode",si.source_status AS "sourceStatus",si.retry_after AS "retryAfter"
+      FROM playable_items p JOIN movies m ON m.id=p.movie_id
+      JOIN source_items si ON si.playable_id=p.id AND si.movie_id=m.id
+      JOIN content_sources cs ON cs.id=si.source_id AND cs.movie_id=m.id
+      WHERE p.id=$1 AND si.id=$2 AND p.archived_at IS NULL
+    `, [playableId, sourceItemId]) as Array<Record<string, unknown>>;
+    if (!rows[0] || rows[0].movieStatus !== 'published') throw new NotFoundException('Playable source is not publicly available');
+    return rows[0];
+  }
+
+  async ownedSourceItem(sourceItemId: string) {
+    const rows = await this.dataSource.query(`
+      SELECT si.id AS "sourceItemId",si.movie_id AS "movieId",si.playable_id AS "playableId",cs.source_type AS "sourceType",si.playback_mode AS "playbackMode"
+      FROM source_items si JOIN content_sources cs ON cs.id=si.source_id AND cs.movie_id=si.movie_id
+      JOIN playable_items p ON p.id=si.playable_id AND p.movie_id=si.movie_id AND p.archived_at IS NULL
+      WHERE si.id=$1
+    `, [sourceItemId]) as Array<{ sourceItemId: string; movieId: string; playableId: string; sourceType: string; playbackMode: string }>;
+    const source = rows[0];
+    if (!source || source.sourceType !== 'owned' || source.playbackMode !== 'owned_hls') throw new NotFoundException('Owned source item not found');
+    return { ...source, sourceType: 'owned' as const, playbackMode: 'owned_hls' as const };
+  }
+
+  async markOwnedReady(sourceItemId: string, requestId: string) {
+    return this.dataSource.transaction(async (manager) => {
+      const selected = await manager.query(`
+        SELECT si.movie_id,si.source_id,si.source_status,cs.source_type,m.version AS movie_version
+        FROM source_items si JOIN content_sources cs ON cs.id=si.source_id JOIN movies m ON m.id=si.movie_id
+        WHERE si.id=$1 FOR UPDATE OF si,cs
+      `, [sourceItemId]) as Array<{ movie_id: string; source_id: string; source_status: SourceState; source_type: string; movie_version: string }>;
+      const source = selected[0];
+      if (!source || source.source_type !== 'owned') throw new NotFoundException('Owned source item not found');
+      const changed = source.source_status !== 'available';
+      await manager.query(`UPDATE source_items SET source_status='available',retry_after=NULL,last_resolved_at=now(),version=version+CASE WHEN $2 THEN 1 ELSE 0 END,updated_at=now() WHERE id=$1`, [sourceItemId, changed]);
+      await manager.query(`UPDATE content_sources SET source_status='available',metadata_checked_at=now(),version=version+CASE WHEN source_status<>'available' THEN 1 ELSE 0 END,updated_at=now() WHERE id=$1`, [source.source_id]);
+      if (changed) await this.writeEvent(manager, 'movie.source.updated', source.movie_id, source.movie_version, requestId, { movieId: source.movie_id, sourceId: source.source_id, sourceItemId, sourceStatus: 'available', retryAfter: null });
+      return { sourceItemId, sourceStatus: 'available' };
+    });
+  }
+
+  async reportSourceStatus(sourceItemId: string, status: 'available' | 'unavailable' | 'error', retryAfterValue: string | null, requestId: string) {
+    let retryAfter: Date | null = null;
+    if (retryAfterValue) {
+      retryAfter = new Date(retryAfterValue);
+      if (!Number.isFinite(retryAfter.getTime()) || retryAfter.getTime() <= Date.now() || retryAfter.getTime() > Date.now() + 24 * 60 * 60_000) {
+        throw new BadRequestException('retryAfter must be a future timestamp within 24 hours');
+      }
+    }
+    if (status === 'available' && retryAfter) throw new BadRequestException('An available source cannot have retryAfter');
+    return this.dataSource.transaction(async (manager) => {
+      const selected = await manager.query(`
+        SELECT si.movie_id,si.source_id,si.source_status,si.retry_after,cs.source_type,m.version AS movie_version
+        FROM source_items si JOIN content_sources cs ON cs.id=si.source_id JOIN movies m ON m.id=si.movie_id
+        WHERE si.id=$1 FOR UPDATE OF si,cs
+      `, [sourceItemId]) as Array<{ movie_id: string; source_id: string; source_status: SourceState; retry_after: Date | null; source_type: string; movie_version: string }>;
+      const current = selected[0];
+      if (!current || current.source_type !== 'third_party') throw new NotFoundException('Third-party source item not found');
+      const changed = current.source_status !== status || (current.retry_after?.getTime() ?? null) !== (retryAfter?.getTime() ?? null);
+      await manager.query(`UPDATE source_items SET source_status=$2,last_resolved_at=now(),retry_after=$3,version=version+CASE WHEN $4 THEN 1 ELSE 0 END,updated_at=now() WHERE id=$1`, [sourceItemId, status, retryAfter, changed]);
+      const aggregateRows = await manager.query(`
+        SELECT CASE WHEN bool_or(source_status='available') THEN 'available'
+          WHEN bool_or(source_status='unknown') THEN 'unknown'
+          WHEN bool_or(source_status='error') THEN 'error' ELSE 'unavailable' END AS status
+        FROM source_items WHERE source_id=$1
+      `, [current.source_id]) as Array<{ status: SourceState }>;
+      const aggregateStatus = aggregateRows[0]?.status ?? status;
+      await manager.query(`
+        UPDATE content_sources SET source_status=$2,metadata_checked_at=now(),
+          version=version+CASE WHEN source_status<>$2 THEN 1 ELSE 0 END,updated_at=now() WHERE id=$1
+      `, [current.source_id, aggregateStatus]);
+      if (changed) await this.writeEvent(manager, 'movie.source.updated', current.movie_id, current.movie_version, requestId, {
+        movieId: current.movie_id, sourceId: current.source_id, sourceItemId, sourceStatus: status,
+        retryAfter: retryAfter?.toISOString() ?? null,
+      });
+      return { sourceItemId, sourceStatus: status, retryAfter: retryAfter?.toISOString() ?? null };
+    });
+  }
+
   async profileFilter(profileId: string | undefined, userId: string | undefined, requestId: string): Promise<boolean> {
     if (!profileId) return false;
     if (!userId) throw new UnauthorizedException('JWT authentication is required when profileId is provided');

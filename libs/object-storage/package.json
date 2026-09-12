@@ -1,0 +1,7 @@
+{
+  "name": "@movie/object-storage",
+  "version": "0.1.0",
+  "private": true,
+  "main": "../../../dist/libs/object-storage/index.js",
+  "types": "./src/index.ts"
+}

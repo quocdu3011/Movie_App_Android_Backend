@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsISO8601, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength } from 'class-validator';
 
 export class CatalogQueryDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) page = 1;
@@ -96,6 +96,11 @@ export class PatchSourceItemDto {
   @IsOptional() @IsString() @MaxLength(200) externalEpisodeKey?: string | null;
   @IsOptional() @IsString() @MaxLength(200) externalEpisodeSlug?: string | null;
   @IsOptional() @IsUUID() playableId?: string;
+}
+
+export class SourceItemStatusDto {
+  @IsIn(['available', 'unavailable', 'error']) status!: 'available' | 'unavailable' | 'error';
+  @IsOptional() @IsISO8601() retryAfter?: string | null;
 }
 
 export class MetadataLockDto { @IsBoolean() locked!: boolean; }

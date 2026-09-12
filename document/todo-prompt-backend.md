@@ -1,6 +1,6 @@
 # TODO và prompt triển khai backend — App xem phim
 
-Bản đồng bộ: **2026-09-12 / revision 8**. Checklist chưa tick là việc chưa có bằng chứng nghiệm thu. G0–G4 đã qua nghiệm thu local end-to-end trên Node 24.21.0 và PostgreSQL/Kafka Compose. Workflow GitHub Actions gọi smoke Catalog và Payment; hosted result chỉ được xác nhận sau khi push/trigger CI. Tài liệu tách rõ bằng chứng local khỏi kết quả CI hosted.
+Bản đồng bộ: **2026-09-12 / revision 9**. Checklist chưa tick là việc chưa có bằng chứng nghiệm thu. G0–G5 đã qua nghiệm thu local end-to-end trên Node 24.21.0 và PostgreSQL/Redis/Kafka Compose. Workflow GitHub Actions gọi smoke Catalog, Payment và Streaming; hosted result chỉ được xác nhận sau khi push/trigger CI. Tài liệu tách rõ bằng chứng local khỏi kết quả CI hosted.
 
 Đọc [thiết kế app](thiet-ke-app-xem-phim.md), [thiết kế backend chi tiết](backend-chi-tiet.md), [hợp đồng Payment OpenAPI](payment-openapi.yaml) và [tài liệu tích hợp KKPhim](kkphim-api.md) trước các giai đoạn liên quan. Backend chi tiết là nguồn chuẩn schema/API/event của MovieApp; OpenAPI ghi request/response cho các route đã nghiệm thu; tài liệu KKPhim là tham chiếu endpoint/response của provider; TODO không định nghĩa schema cạnh tranh.
 
@@ -207,11 +207,11 @@ Mock config production phải fail startup. Test DB concurrency, không chỉ mo
 
 ## G5 — Phiên phát KKPhim và progress
 
-- [ ] Session request/idempotency, atomic Redis lease/quota.
-- [ ] POST playback-sessions + heartbeat/progress/events, contract camelCase.
-- [ ] Fresh HLS resolver, không cache/persist URL và không tạo external asset.
-- [ ] Progress PostgreSQL write-through, seq/session ordering.
-- [ ] Source recovery/circuit breaker và profile deletion consumer.
+- [x] Session request/idempotency, atomic Redis lease/quota.
+- [x] POST playback-sessions + heartbeat/progress/events, contract camelCase.
+- [x] Fresh HLS resolver, không cache/persist URL và không tạo external asset.
+- [x] Progress PostgreSQL write-through, seq/session ordering.
+- [x] Source recovery/circuit breaker và profile deletion consumer.
 
 **Prompt:**
 
@@ -238,13 +238,15 @@ Dọn/đóng session khi profile.deleted; endpoint của session luôn verify us
 
 **Nghiệm thu:** local provider fixture thay URL giữa hai lần tạo phiên, backend lấy URL mới; `video_assets` không có dữ liệu KKPhim; concurrency race không vượt quota; user khác không gửi progress/heartbeat; app mất mạng hết lease; tua lại/sai thứ tự/session mới không mất progress; Redis cache hỏng vẫn đọc DB nhưng Redis lease hỏng chặn tạo phiên mới; provider phục hồi sau 503 được thử lại; failed resolve không rò slot. Test HTTP media fixture riêng, không chỉ kiểm tra chuỗi URL trong response.
 
+**Kết quả local 2026-09-12:** `npm run build`, 11 unit tests, G0 HTTP smoke và các smoke E2E G1–G5 chạy tuần tự trong Node 24.21.0; lệnh kết thúc với exit code 0. G5 tạo DB PostgreSQL tạm sạch, xác nhận 7 bảng, không có cột URL playback và kiểm tra CHECK constraint; sau đó khởi động Auth, Gateway, Profile, Catalog, Payment và Streaming thật cùng PostgreSQL/Redis/Kafka Compose. HTTP provider fixture trả selector hai server và đổi URL theo lần gọi; HTTPS media fixture độc lập thực sự trả manifest `.m3u8` và segment. E2E xác nhận cùng key dùng một session/slot và trả URL mới, cross-user/cross-auth-session bị từ chối, kids/subscription/archive/mode/URL policy, progress rewind/null duration/out-of-order/resume, heartbeat/qualified outbox, quota race, provider 503 recovery, failed-resolve release, profile.deleted dọn session/progress/cache/lease, hết hạn không hồi sinh và Redis lease lỗi fail-closed. Không chạy GitHub Actions hosted trong phiên này; bằng chứng trên là local.
+
 ## G6 — Upload, transcode và phát owned HLS
 
-- [ ] Initiate upload → presigned PUT → verified complete → outbox video.uploaded.
-- [ ] Durable worker job, lease/retry/generation/DLQ và cleanup.
-- [ ] FFmpeg HLS nhiều rendition phù hợp input, manifest hoàn chỉnh.
-- [ ] Owned resolver/media-edge bảo vệ master lẫn variant/segment; credential renew.
-- [ ] Catalog readiness projection và flow phim nội bộ thực sự phát được.
+- [x] Initiate upload → presigned PUT → verified complete → outbox video.uploaded.
+- [x] Durable worker job, lease/retry/generation/DLQ và cleanup.
+- [x] FFmpeg HLS nhiều rendition phù hợp input, manifest hoàn chỉnh.
+- [x] Owned resolver/media-edge bảo vệ master lẫn variant/segment; credential renew.
+- [x] Catalog readiness projection và flow phim nội bộ thực sự phát được.
 
 **Prompt:**
 
@@ -270,6 +272,8 @@ MVP chưa DRM, không cần cloud account thật. Tạo một clip test nhỏ b�
 ```
 
 **Nghiệm thu:** Gateway Admin đúng role; missing file/wrong size/expiry bị từ chối; complete lặp không hai job; worker chết/restart không mất job; retry hết thành failed; master/variant/segment fetch được với credential và media decode/ffprobe được; thiếu/hết hạn cookie hoặc truy cập origin bị chặn; renewal phiên active hoạt động; generation cũ không override ready mới. Kiểm thử cả phim lẻ và ít nhất một tập series.
+
+**Kết quả local 2026-09-12:** `npm run smoke:owned-media-ci` kết thúc exit code 0 trên PostgreSQL, Kafka, Redis và MinIO Compose, cùng FFmpeg/FFprobe cục bộ. Bài E2E tạo phim lẻ và một tập series owned, tạo MP4 720p ngắn bằng FFmpeg, khởi động Auth/Gateway/Profile/Catalog/Payment/Streaming/Worker/Media edge thật, rồi kiểm tra Admin route, presigned PUT, HEAD xác nhận file thiếu, complete lặp và một job duy nhất. Worker kiểm checksum raw, ffprobe, tạo rendition 480p/720p và HLS; test tải master, variant và segment qua edge với credential, ffprobe nội dung đã tải, đồng thời xác nhận master/segment không credential và MinIO origin không credential bị từ chối. Nó cũng kiểm tra renewal credential và CAS không cho kết quả generation cũ ghi đè generation mới. Một job `queued` đã lưu bền được worker nhận lại sau restart, còn input không phải media đi qua lần đầu và ba retry rồi asset/job chuyển `failed`. Chưa chạy GitHub Actions hosted; bằng chứng là local.
 
 ## G7 — Search, favorites/history và Home composition
 

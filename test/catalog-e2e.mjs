@@ -166,7 +166,7 @@ const commonEnv = {
   AUTH_JWT_ISSUER: process.env.AUTH_JWT_ISSUER ?? 'https://auth.movieapp.local', AUTH_JWT_AUDIENCE: process.env.AUTH_JWT_AUDIENCE ?? 'movieapp-api', AUTH_JWT_KID: `g3-${randomUUID()}`,
   AUTH_PRIVATE_KEY_PATH: privateKeyPath, AUTH_PUBLIC_KEY_PATH: publicKeyPath,
   AUTH_INTERNAL_TOKENS_JSON: JSON.stringify({ 'api-gateway': gatewayToken }), GATEWAY_SERVICE_TOKEN: gatewayToken,
-  CATALOG_INTERNAL_TOKENS_JSON: JSON.stringify({ 'api-gateway': gatewayToken }), PROFILE_INTERNAL_TOKENS_JSON: JSON.stringify(internalTokens),
+  CATALOG_INTERNAL_TOKENS_JSON: JSON.stringify({ 'api-gateway': gatewayToken, 'streaming-service': streamingToken }), PROFILE_INTERNAL_TOKENS_JSON: JSON.stringify(internalTokens),
   PROFILE_SERVICE_URL: profileUrl, CATALOG_SERVICE_URL: catalogUrl, AUTH_SERVICE_URL: authUrl,
   AUTH_PORT: String(authPort), GATEWAY_PORT: String(gatewayPort), PROFILE_PORT: String(profilePort), CATALOG_PORT: String(catalogPort),
   KKPHIM_API_BASE_URL: providerUrl, KKPHIM_TIMEOUT_MS: '1500', CATALOG_SYNC_POLL_MS: '250', PROFILE_OUTBOX_POLL_MS: '250',

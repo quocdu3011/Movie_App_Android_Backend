@@ -1,0 +1,10 @@
+{
+  "name": "@movie/media-edge",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "@movie/object-storage": "0.1.0",
+    "@movie/shared-config": "0.1.0",
+    "@movie/shared-dto": "0.1.0"
+  }
+}

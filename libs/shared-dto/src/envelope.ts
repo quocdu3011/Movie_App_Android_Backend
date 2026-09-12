@@ -33,16 +33,20 @@ export class HttpExceptionEnvelopeFilter implements ExceptionFilter {
     const response = http.getResponse<Response>();
     const status = exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
     const raw = exception instanceof HttpException ? exception.getResponse() : null;
+    const rawObject = raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
     const message = typeof raw === 'string'
       ? raw
-      : raw && typeof raw === 'object' && 'message' in raw
-        ? (Array.isArray(raw.message) ? raw.message.join(', ') : String(raw.message))
+      : rawObject && 'message' in rawObject
+        ? (Array.isArray(rawObject.message) ? rawObject.message.join(', ') : String(rawObject.message))
         : status >= 500 ? 'Internal server error' : 'Request failed';
-    const code = status >= 500 ? 'INTERNAL_ERROR' : `HTTP_${status}`;
+    const providedCode = rawObject?.code;
+    const code = typeof providedCode === 'string' && /^[A-Z][A-Z0-9_.-]{1,79}$/.test(providedCode)
+      ? providedCode
+      : status >= 500 ? 'INTERNAL_ERROR' : `HTTP_${status}`;
     const requestId = request.requestId ?? 'unknown';
     if (status >= 500) {
       console.error(JSON.stringify({ level: 'error', requestId, path: request.path, status }));
     }
-    response.status(status).json(errorEnvelope({ code, message }, requestId));
+    response.status(status).json(errorEnvelope({ code, message, ...(rawObject?.details === undefined ? {} : { details: rawObject.details }) }, requestId));
   }
 }

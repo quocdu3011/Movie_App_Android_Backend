@@ -1,6 +1,6 @@
 # Thiết kế backend chi tiết — App xem phim
 
-Bản đồng bộ: **2026-09-12 / revision 5**. Đây là đặc tả thiết kế; trạng thái triển khai từng giai đoạn được ghi riêng tại mục 8.2–8.5. Phạm vi không bao gồm kiểm tra bản quyền nguồn bên thứ ba.
+Bản đồng bộ: **2026-09-12 / revision 6**. Đây là đặc tả thiết kế; trạng thái triển khai từng giai đoạn được ghi riêng tại mục 8.2–8.6. Phạm vi không bao gồm kiểm tra bản quyền nguồn bên thứ ba.
 
 ## 0. Quy ước và quyết định nền
 
@@ -26,13 +26,13 @@ Bản đồng bộ: **2026-09-12 / revision 5**. Đây là đặc tả thiết k
 | Cache/lease | Redis 7.4.2 image; MVP không dùng Redis làm nơi duy nhất lưu tiến độ đã xác nhận thành công |
 | Sự kiện | Apache Kafka 4.2.0, KRaft, một broker cho dev, replication factor 1 |
 | Search | OpenSearch 2.19.1 dev, index từ catalog nội bộ đã chuẩn hóa |
-| Storage/media | MinIO RELEASE.2025-06-13T11-33-47Z; Nginx 1.27.4 media-edge; FFmpeg worker; adapter CDN cho triển khai thật |
+| Storage/media | MinIO RELEASE.2025-06-13T11-33-47Z; Node 24.21.0 media-edge xác minh credential; FFmpeg worker; adapter CDN cho triển khai thật |
 | Giám sát | Prometheus 3.2.1, Grafana 11.5.1, Loki 3.4.2; profile bật riêng |
 | Vận hành | Docker Compose; GitHub Actions; structured logs |
 
 Các phiên bản trên đã được pin trong manifest/Compose, không dùng tag `latest`. Kafka heap và OpenSearch heap đều giới hạn 512 MiB; profile core cần khoảng 1–2 GiB khi nhàn rỗi, media thêm khoảng 1 GiB, observability thêm khoảng 0.5–1 GiB. Đây là dự toán từ cấu hình, chưa phải số đo benchmark; để bật OpenSearch cần `vm.max_map_count=262144` trên host Linux. Image single-node, Kafka replication factor 1 và credentials ví dụ chỉ dành cho máy phát triển/CI, không phải cấu hình HA/production. Compose profile `core` chạy PostgreSQL, Redis, Kafka; `media` bổ sung OpenSearch, MinIO, media-edge; `observability` bổ sung Prometheus, Grafana, Loki.
 
-Workspace dùng `package-lock.json`; `.nvmrc` chọn Node 24.21.0. CI phải dùng đúng phiên bản này. Các service business được triển khai theo từng giai đoạn; G3 bổ sung Catalog và content-provider KKPhim có fixture offline, còn luồng playback được giữ tách biệt cho G5.
+Workspace dùng `package-lock.json`; `.nvmrc` chọn Node 24.21.0. CI phải dùng đúng phiên bản này. Các service business được triển khai theo từng giai đoạn: G3 bổ sung Catalog/provider KKPhim, G4 Payment/entitlement, G5 Streaming playback/progress. Fixture KKPhim và media chạy offline trong CI.
 
 ```text
 Backend/                                  # Git repository root
@@ -123,8 +123,8 @@ Ràng buộc cần hiện thực:
 
 - `video_assets(id UUID PK, source_item_id UUID UNIQUE NOT NULL, playable_id UUID NOT NULL, movie_id UUID NOT NULL, raw_object_key TEXT, master_manifest_key TEXT NULL, available_resolutions TEXT[], duration_seconds INT NULL, processing_status, generation INT DEFAULT 1, upload_expires_at, failure_code NULL, created_at, updated_at)`. Chỉ owned; UUID Catalog là tham chiếu logic, không FK xuyên DB.
 - Trạng thái asset: `upload_pending → queued → processing → ready | failed`; upload bỏ dở thành `expired`. Ghi trạng thái processing khi worker nhận việc; retry job terminal bằng generation mới.
-- `playback_sessions(id UUID PK, ordinal BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE, user_id, auth_session_id, profile_id, movie_id, playable_id, source_item_id, source_type, state=reserved|ready|playing|stopped|failed|expired, last_seq BIGINT DEFAULT 0, created_at, expires_at, last_seen_at, started_at NULL, qualified_at NULL)`. Không lưu URL ngoài trong session. Mọi ID ràng buộc với phiên đã tạo, client không tự thay chúng qua progress/event.
-- `playback_requests(user_id, idempotency_key, request_hash, session_id, expires_at)` unique `(user_id,idempotency_key)`; không lưu URL ngoài trong response idempotency. Retry cùng key trả cùng session còn hiệu lực và có thể resolve URL mới; body khác hoặc session đã terminal/hết lease trả 409 (client dùng key mới để mở phiên mới). Request đang reserved được single-flight hoặc trả trạng thái đang xử lý, không resolve/tính slot hai lần. Lưu key ít nhất 24 giờ; xử lý key trước kiểm tra quota để retry không bị tính là phiên thứ hai.
+- `playback_sessions(id UUID PK, ordinal BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE, user_id, auth_session_id, profile_id, movie_id, playable_id, source_item_id, source_type, state=reserved|ready|playing|stopped|failed|expired, last_seq BIGINT DEFAULT 0, created_at, expires_at, last_seen_at, started_at NULL, qualified_at NULL, closed_at NULL)`. Session terminal phải có `closed_at`. Không lưu URL ngoài trong session. Mọi ID ràng buộc với phiên đã tạo, client không tự thay chúng qua progress/event.
+- `playback_requests(user_id, idempotency_key, request_hash, session_id, expires_at)` unique `(user_id,idempotency_key)`; không lưu URL ngoài trong response idempotency. Retry cùng key trả cùng session còn hiệu lực và có thể resolve URL mới; body khác hoặc session đã terminal/hết lease trả 409 (client dùng key mới để mở phiên mới). Request trùng khi session còn `reserved` trả `PLAYBACK_SESSION_RESOLVING` 409 để retry cùng key, không tạo slot/session thứ hai. Lưu key ít nhất 24 giờ; xử lý key trước quota để retry không bị tính là phiên thứ hai.
 
 Schema sửa lỗi khóa progress cho cả phim lẻ và tập:
 
@@ -151,6 +151,8 @@ Không dùng biểu thức trong danh sách cột PRIMARY KEY và không dùng e
 **Ghi tiến độ MVP:** commit PostgreSQL trước khi trả thành công, cập nhật/xóa Redis cache sau commit. Chưa dùng write-behind/BullMQ cho progress; cân nhắc sau benchmark để tránh mất tiến độ đã ACK khi Redis/worker hỏng. Chỉ upsert khi `(session_ordinal,last_seq)` mới hơn bản ghi hiện tại. Vị trí có thể giảm khi tua về trước; không lấy MAX(position). Server cấp ordinal, client tăng seq trong một session; không dùng đồng hồ client để quyết định thứ tự. Session mới chỉ chiếm tiến độ khi nhận update hợp lệ đầu tiên.
 
 Read-cache progress là tùy chọn, TTL khởi điểm 60 giây, update có version gate theo cùng tuple để callback request cũ không ghi đè cache mới. Khi tạo phiên/resume phải đọc PostgreSQL để không dùng cache stale; lỗi cache không biến DB commit thành lỗi phải gửi lại. BIGINT ordinal/seq phải giữ độ chính xác trong xử lý và DTO, không ép sang JavaScript Number ngoài safe integer range.
+
+Streaming dùng Redis sorted set theo user cho lease/quota và Lua script atomic reserve/renew/release; Redis là trạng thái slot tạm có expiry, PostgreSQL giữ session/request/progress lâu bền. Redis lease lỗi thì fail-closed. `playback_events` dedupe eventId; `qualified_at` cùng outbox `playback.qualified` được ghi trong transaction. `processed_events` làm inbox cho `profile.deleted`; consumer đóng session, xóa progress/cache và nhả lease. Reaper cập nhật session hết hạn và dọn request idempotency quá hạn.
 
 Duration của nguồn ngoài có thể chưa biết: cho phép null, không giả lập duration=0. Khi đổi source/cut, clamp resume theo duration mới; nếu độ dài khác đáng kể, trả `resumeNeedsConfirmation=true`, không hứa cùng timestamp luôn là cùng cảnh.
 
@@ -308,15 +310,15 @@ Gateway định tuyến tường minh `/admin/movies`, `/admin/content-sources`,
 |---|---|---|---|
 | POST | `/internal/auth/validate-session` | Auth | Gateway, các API service; kiểm tra user/sid/revoke |
 | POST | `/internal/profiles/validate` | Profile | Streaming, Gateway, Catalog; userId/profileId |
-| GET | `/internal/catalog/playables/:playableId` | Catalog | Streaming; trạng thái movie, accessTier, kids, source selectors |
+| GET | `/internal/catalog/playables/:playableId?sourceItemId=...` | Catalog | Streaming; trạng thái movie, accessTier, kids, source selectors |
 | POST | `/internal/catalog/movies/batch` | Catalog | Profile, Gateway, Recommendation; hydrate/filter IDs |
-| POST | `/internal/catalog/source-items/:sourceItemId/status` | Catalog | Streaming, optimistic version và thời gian resolve |
+| POST | `/internal/catalog/source-items/:sourceItemId/status` | Catalog | Streaming; source state và retryAfter sau resolve |
 | GET | `/internal/subscriptions/users/:userId/entitlement` | Payment | Streaming; active theo now() và endAt |
-| GET | `/internal/streaming/profiles/:profileId/progress` | Streaming | Profile, Gateway; đã kiểm tra ownership |
+| GET | `/internal/streaming/profiles/:profileId/progress` | Streaming | Profile; Profile xác thực profile ownership trước khi gọi |
 | GET | `/internal/recommendations/:profileId` | Recommendation | Gateway |
 | GET | `/internal/trending` | Recommendation | Catalog, Gateway |
 
-Gateway kiểm tra chữ ký/session trước khi proxy `/profiles`; chỉ lấy `userId` từ Auth introspection và ghi đè mọi header cùng tên do client gửi. Profile CRUD yêu cầu service credential của `api-gateway`; validation nội bộ chỉ chấp nhận credential được cấp cho Gateway, Streaming hoặc Catalog. `profile.deleted` được lưu cùng soft-delete trong Profile DB và publish qua outbox; chưa có dependency bắt buộc tới Streaming để CRUD hoạt động.
+Gateway kiểm tra chữ ký/session trước khi proxy `/profiles`; chỉ lấy `userId` từ Auth introspection và ghi đè mọi header cùng tên do client gửi. Profile CRUD yêu cầu service credential của `api-gateway`; validation nội bộ chỉ chấp nhận credential được cấp cho Gateway, Streaming hoặc Catalog. `profile.deleted` được lưu cùng soft-delete trong Profile DB và publish qua outbox; consumer Streaming đóng phiên và xóa progress/cache. Profile CRUD vẫn không phụ thuộc đồng bộ vào Streaming.
 
 Profile core không cần Streaming lúc tạo/sửa hồ sơ; history composition được làm sau khi Streaming có API. Recommendation chỉ đọc Catalog batch và event, không truy cập DB Streaming. Service dependency lỗi trả 503 rõ tên dependency trong log, không tự mở quyền tài khoản; riêng recommendation/trending lỗi có thể bỏ section/fallback.
 
@@ -389,7 +391,7 @@ sequenceDiagram
 ```
 
 1. **Frontend:** chọn movie/playable/sourceItem từ public Catalog đã chuẩn hóa. Chọn profile cá nhân; gọi POST tạo session, không gửi URL ngoài tùy ý. **Backend:** check Published, ownership, isKidsSafe, tier, quota. **Bên thứ ba:** chưa nhận request media.
-2. **Backend:** lấy selectors Catalog và gọi `resolvePlayback` qua client chung. Tìm đúng server/tập; không chọn phần tử đầu tiên để đoán tập. **KKPhim API:** trả detail và link; API metadata và host media có thể khác chủ thể/hạ tầng.
+2. **Backend:** lấy selectors Catalog và gọi `resolvePlayback` qua client chung. Fetch detail mới cho mỗi resolve, tìm đúng server/tập; không chọn phần tử đầu tiên để đoán tập. Source failure cập nhật `sourceStatus/retryAfter`; retry sau backoff thử lại. **KKPhim API:** trả detail và link; API metadata và host media có thể khác chủ thể/hạ tầng.
 3. **Backend:** HLS là chế độ MVP. Chỉ có embed trả `PLAYBACK_MODE_UNSUPPORTED` (422), không tự động fallback WebView. Không tạo `video_assets` cho nguồn ngoài, không persist/cache URL; retry cùng request key dùng lại session nhưng resolve fresh.
 4. **Frontend:** Media3 nhận response, tải manifest/variant/segment trực tiếp host media; ABR chỉ có nếu manifest cung cấp nhiều rendition. Không chuyển bytes video qua backend. **Host media:** phục vụ các file và quyết định khả dụng thực tế.
 5. **Frontend:** progress seq tăng mỗi session, heartbeat độc lập kể cả đang pause nếu muốn giữ phiên, event stopped/failed khi kết thúc. **Backend:** commit progress, giải phóng lease, event dedupe. Android chết/mất mạng không bảo đảm có callback stopped; dùng TTL/reaper thay vì chờ “ngắt kết nối HTTP”.
@@ -452,7 +454,7 @@ Envelope `{eventId,eventType,schemaVersion,aggregateId,aggregateVersion,occurred
 | `payment.reconciliation_required` | Payment | Chưa có consumer; vận hành/đối soát sau này | paymentId, subscriptionId, userId, providerTransactionId |
 | `subscription.expiring` | Payment | Notification | userId, subscriptionId, endAt, reminderType |
 | `profile.deleted` | Profile | Streaming, Recommendation | profileId, userId |
-| `playback.qualified` | Streaming | Recommendation | sessionId, profileId, movieId, occurredAt |
+| `playback.qualified` | Streaming | Recommendation | sessionId, userId, profileId, movieId, playedSeconds; occurredAt nằm trong envelope |
 
 Outbox ghi cùng transaction nghiệp vụ, publisher đánh published sau Kafka ACK; có thể phát lặp nên consumer inbox và version gate bắt buộc. Retry bounded, DLQ cùng envelope/error metadata, replay giữ eventId để dedupe. Partition/order không giải quyết transaction xuyên DB. Search đọc metadata hiện tại bằng API Catalog; consumer checkpoint/lag quan sát được.
 
@@ -490,14 +492,14 @@ Một qualified view: session báo xem tích lũy tối thiểu 30 giây, event 
 | Đếm progress thành lượt xem | qualified view unique session | Một session nhiều progress chỉ một view |
 | CI/CD trước E2E và path filter bỏ sót libs | E2E trước deploy, dependency-aware checks | Thay shared lib/lockfile kích hoạt checks |
 
-Các hợp đồng đã được đối chiếu ở mức tài liệu. G0–G4 hiện có code và bằng chứng tương ứng tại mục 8.2–8.5; các service business còn lại vẫn cần kiểm tra theo từng giai đoạn. Chưa có kết quả test tải hoặc chứng minh provider/CDN tương thích thật; các tiêu chí đó nằm trong TODO, không được đánh dấu hoàn thành chỉ vì đã viết thiết kế.
+Các hợp đồng đã được đối chiếu ở mức tài liệu. G0–G5 hiện có code và bằng chứng tương ứng tại mục 8.2–8.6; Worker/Notification/Recommendation và các giai đoạn sau vẫn cần kiểm tra theo TODO. Chưa có kết quả test tải hoặc bằng chứng tương thích production CDN; không suy ra những điều đó từ fixture local.
 
 ### 8.2. G0 implementation và bằng chứng nghiệm thu hiện tại
 
-- Workspace pin Node 24.21.0 qua `.nvmrc`, NestJS 11.2.3, TypeORM 0.3.31, TypeScript 5.9.3 và dependency lockfile; tạo đủ chín app cùng năm thư viện. Các service chưa đến giai đoạn vẫn trả health/readiness; Auth và Profile đã có nghiệp vụ G1/G2, Gateway readiness phụ thuộc Auth.
+- Workspace pin Node 24.21.0 qua `.nvmrc`, NestJS 11.2.3, TypeORM 0.3.31, TypeScript 5.9.3 và dependency lockfile; tạo đủ chín app cùng sáu thư viện. G0 ban đầu có health/readiness skeleton; Auth/Profile/Catalog/Payment/Streaming lần lượt được triển khai G1–G5 và Worker được triển khai G6. Notification/Recommendation còn ở skeleton cho tới G7–G8.
 - `shared-dto` cung cấp envelope, exception filter, request ID và health module; `shared-config` từ chối `NODE_ENV` thiếu/sai; `shared-kafka` cung cấp event contract, còn `content-provider` có client metadata KKPhim fixture-compatible và resolver playback riêng cho G5.
 - Compose có ba profile, named volumes, cổng host bind loopback và healthcheck dịch vụ. PostgreSQL bootstrap tạo/tái sử dụng tám database/user; Kafka dùng `--if-not-exists`; MinIO tạo hai bucket riêng tư idempotent. Kafka dev một broker chỉ có replication factor 1.
-- CI-equivalent trên Node 24.21.0: `npm ci`, lint, typecheck, build, unit tests, HTTP smoke cho Gateway + các service chưa đến giai đoạn, và các E2E theo từng giai đoạn đều pass. G0 smoke xác nhận startup, health/readiness, request ID, error envelope, Gateway fail-closed khi Auth không sẵn sàng và startup lỗi khi thiếu `NODE_ENV`; Catalog readiness/business được kiểm tra trong G3 E2E sau khi PostgreSQL đã sẵn sàng.
+- G0 smoke xác nhận startup, health/readiness, request ID, error envelope, Gateway fail-closed khi Auth không sẵn sàng, startup lỗi khi thiếu `NODE_ENV`, cùng các skeleton Worker/Notification/Recommendation. Các API business được test trong smoke theo từng giai đoạn.
 - PostgreSQL bootstrap đã tạo đủ tám database/user và chạy lại lần hai không lỗi trên cluster tạm PostgreSQL 16.15. Cluster tạm đã dừng; cluster hệ thống không bị thay đổi.
 - Sau khi cài Docker Engine, Compose core được chạy lại ngày 2026-09-12: PostgreSQL 16.4, Redis 7.4.2 và Kafka 4.2.0 healthy; bootstrap tám DB/user và 14 topic chạy liên tiếp hai lượt thành công. Persistence sau restart đã được kiểm tra trong G0 acceptance trước đó. GitHub Actions hosted chưa được trigger vì worktree chưa push và xác thực `gh` không khả dụng; không ghi kết quả local thành CI remote.
 - Host Node 26.7.0 không được dùng làm bằng chứng tương thích; toàn bộ code check và E2E ở đây chạy trong image Node 24.21.0.
@@ -528,5 +530,22 @@ Các hợp đồng đã được đối chiếu ở mức tài liệu. G0–G4 h
 - Mua gói khóa purchase guard theo user, so sánh request hash cho idempotency, tạo subscription/payment pending trong transaction rồi khởi tạo order mock sau commit. Webhook verify HMAC constant-time, ràng buộc provider/order/amount/currency, khóa state và receipt, CAS activation, không downgrade khi failed đến sau success, ghi transactional outbox; publisher chỉ đánh ACK sau khi Kafka xác nhận. Job chỉ đóng pending khi mock provider xác nhận failed/expired; hết hạn theo `endAt` được áp dụng trực tiếp lúc đọc entitlement, không phụ thuộc cron. Reminder ba ngày dedupe theo subscription/endAt/type.
 - Late success sau khi payment/subscription đã đóng được lưu thành `reconciliation_required`, phát event riêng và không cấp entitlement chồng. Trạng thái này cần quy trình đối soát vận hành ở phase thanh toán provider thật; mock không thực hiện refund hoặc giao dịch tiền thật.
 - Bằng chứng trên Node 24.21.0 với PostgreSQL/Kafka Compose: `npm run smoke:payment-ci` exit code 0. Smoke tạo DB PostgreSQL tạm mới, chạy migration từ đầu, xác nhận 9 bảng/seed/CHECK constraint rồi xóa DB probe. E2E khởi động Auth/Gateway/Payment thật; kiểm tra production mock guard, free và paid entitlement, idempotent retry/key conflict, hai key cạnh tranh, HMAC trên payload raw có whitespace, chữ ký/order/số tiền/provider sai, webhook đồng thời và trùng event, một lần activation, Kafka outbox ACK, snapshot giá/limits và endAt bất biến, expiry/reminder dedupe, cho mua lại sau khi active subscription hết hạn, pending timeout không tự coi là failed, provider-confirmed failure và late success reconciliation không kích hoạt. Hợp đồng request/response được ghi trong [payment-openapi.yaml](payment-openapi.yaml). Workflow gọi `smoke:payment-ci`; GitHub Actions hosted chưa được push/trigger, nên đây là bằng chứng local chứ không phải CI hosted.
+
+### 8.6. G5 Streaming session/progress — implementation và bằng chứng local
+
+- Migration `CreateStreamingPlaybackSchema1700000000005` thêm `video_assets` (owned only), `playback_sessions`, `playback_requests`, `watch_progress`, `playback_events`, `processed_events` và Streaming outbox; TypeORM `synchronize=false`. Session lưu user/auth-session/profile/movie/playable/source IDs, ordinal BIGINT từ server, state/lease/closed timestamps; không có playback URL column. Idempotency request lưu request hash, không giữ media URL.
+- Gateway proxy nối POST playback session/heartbeat/progress/events/media-auth. Nó lấy `userId`/`authSessionId` từ Auth session đã xác minh, không lấy từ body; Streaming còn gọi Auth, Profile, Catalog và Payment bằng service token riêng. Profile/kids, movie/source mapping, published status, subscription tier và concurrency entitlement được kiểm tra trước khi tạo phiên.
+- Redis Lua script cấp/renew/release lease atomic trên sorted set theo user; TTL mặc định 90 giây. Resolve lỗi nhả slot, process crash được TTL/reaper dọn, Redis lease lỗi fail-closed. Request cùng idempotency key/body khi session active dùng lại session và slot nhưng fetch URL KKPhim mới; request body khác hoặc key trỏ terminal/expired trả 409. Request trùng đang resolve trả `PLAYBACK_SESSION_RESOLVING` 409 để retry cùng key.
+- KKPhim resolver gọi fresh detail, khớp chính xác server/episode selector, có budget và concurrency cap; chỉ trả HTTPS HLS URL thuộc `KKPHIM_MEDIA_HOST_ALLOWLIST`, không persist/cache link, không tạo `video_assets` cho nguồn ngoài. Embed/metadata-only trả 422. Owned thiếu asset trả `VIDEO_NOT_READY` 409; playback owned thành công thuộc G6. Catalog nhận trạng thái available/error/retryAfter; circuit/backoff thử lại sau provider 503.
+- Progress commit trước PostgreSQL ACK; tua về trước được chấp nhận, nhưng seq cũ hoặc session ordinal cũ không thay thế row mới. Duration nullable; session mới resume từ DB. Redis cache là best-effort compare-and-set. Started/qualified/failed/stopped dedupe theo eventId; qualified từ 30 giây client-reported chỉ ghi một lần/session cùng outbox `playback.qualified`. Consumer `profile.deleted` đóng session, xóa progress/cache và giải phóng lease.
+- Bằng chứng local 2026-09-12: Node 24.21.0 `npm run build`, lint, typecheck, 11 unit tests và chuỗi G0–G5 E2E chạy exit code 0. `smoke:streaming-ci` tạo database probe trắng: 7 bảng, URL-column isolation và CHECK constraint pass; sau đó service thật khởi động trên PostgreSQL/Redis/Kafka Compose. HTTP provider fixture có nhiều server/selector và đổi URL theo lần gọi; HTTPS media fixture độc lập thực sự trả manifest `.m3u8` và segment. E2E xác nhận same-key replay/fresh URL/no extra slot, exact selector, user/Auth-session owner, kids/subscription/archive/mapping/mode, progress rewind/reorder/resume/cache fallback, heartbeat/qualified outbox, quota race, provider 503 recovery/no lease leak, profile deletion cleanup, TTL/reaper, Redis outage fail-closed, và không lưu URL/asset KKPhim. Lượt `smoke:streaming-ci` cuối kết thúc exit code 0.
+- GitHub Actions CI gọi `smoke:streaming-ci` sau khi khởi động core services; hosted run chưa được push/trigger trong phiên này. HTTPS media được kiểm tra bằng fixture self-signed trong test; điều đó không chứng minh host/CDN KKPhim production phục vụ ổn định, cũng không có test tải hay enforcement độ phân giải bên thứ ba. Upload, transcode, media-auth owned và playback owned thành công còn ở G6.
+
+### 8.7. G6 Owned upload, transcode và HLS — implementation và bằng chứng local
+
+- Streaming có `POST /admin/videos/uploads` và `POST /admin/videos/:assetId/upload-complete` qua Gateway role `admin`/`content_manager`. Upload tạo hoặc tăng generation của `video_assets`, sinh raw key chỉ ở server, trả presigned MinIO PUT có metadata SHA-256 bắt buộc. Complete HEAD object, kiểm size/metadata/checksum, chuyển CAS sang `queued` và ghi `video.uploaded` trong outbox; complete lặp không thêm job.
+- Worker lưu inbox/event và `transcode_jobs` unique `(assetId,generation)` trong `worker_db` trước khi Kafka offset được xử lý. Job có lease, attempt token, output prefix `assets/{asset}/g{generation}/a{attempt}` và retry 30/60/120 giây theo cấu hình. Worker tải raw, tự kiểm SHA-256, dùng `spawn` argument array cho ffprobe/FFmpeg, không upscale, tạo H.264/AAC HLS 480p/720p/1080p tùy input; upload variant/segment trước master. Callback worker chỉ áp dụng đúng generation và attempt mới, nên kết quả cũ không hạ/cập nhật asset mới.
+- Streaming chuyển asset `ready` cùng manifest/duration/renditions, cập nhật projection owned của Catalog và phát `video.ready`; lỗi cuối chuyển `failed` và `video.transcode_failed`. Resolver owned trả URL media edge cùng credential HMAC scope asset/generation, không trả URL MinIO. `POST media-auth` cấp credential mới khi session owned còn active. Media edge Node đọc private MinIO bằng credential server-side và kiểm credential ở mọi `.m3u8`/`.ts`; origin MinIO vẫn private.
+- Bằng chứng local 2026-09-12: `npm run smoke:owned-media-ci` exit code 0. E2E dùng MinIO/Kafka/PostgreSQL/Redis Compose và FFmpeg/FFprobe cục bộ, chạy các service thật, tạo MP4 720p ngắn, rồi xác nhận direct signed PUT, object thiếu bị từ chối, complete idempotent/một worker job, movie lẻ và episode series đạt ready với 480p/720p. Master, variant và segment chỉ fetch được với credential; không credential và MinIO origin bị chặn; HLS tải về được ffprobe decode. Test cũng xác nhận credential renew, generation cũ không override, worker restart nhận lại job queued bền vững, và input không hợp lệ hết bốn attempt rồi chuyển failed. GitHub Actions hosted chưa được chạy; không có benchmark tải hay CDN production evidence.
 
 Tham khảo kỹ thuật: [NestJS workspace](https://docs.nestjs.com/cli/monorepo), [PostgreSQL constraints](https://www.postgresql.org/docs/current/ddl-constraints.html), [TypeORM migrations](https://typeorm.io/docs/advanced-topics/migrations/), [Apache Kafka Docker image](https://kafka.apache.org/42/getting-started/docker/), [MinIO health probes](https://min.io/docs/minio/linux/operations/monitoring/healthcheck-probe.html), [OAuth refresh-token security](https://www.rfc-editor.org/rfc/rfc9700.html), [CloudFront signed cookies](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-choosing-signed-urls-cookies.html). Các quyết định domain/TTL/thứ tự giai đoạn là thiết kế của dự án, không phải yêu cầu từ những tài liệu ngoài này.

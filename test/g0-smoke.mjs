@@ -8,8 +8,6 @@ import { dirname, resolve } from 'node:path';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const services = [
   { name: 'api-gateway', output: 'apps/api-gateway/main.js', portVariable: 'GATEWAY_PORT' },
-  { name: 'streaming-service', output: 'apps/streaming-service/main.js', portVariable: 'STREAMING_PORT' },
-  { name: 'transcode-worker', output: 'apps/transcode-worker/main.js', portVariable: 'TRANSCODE_PORT' },
   { name: 'notification-service', output: 'apps/notification-service/main.js', portVariable: 'NOTIFICATION_PORT' },
   { name: 'recommendation-service', output: 'apps/recommendation-service/main.js', portVariable: 'RECOMMENDATION_PORT' },
 ];

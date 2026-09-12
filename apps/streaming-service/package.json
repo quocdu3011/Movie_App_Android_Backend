@@ -3,7 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
+    "@movie/content-provider": "0.1.0",
+    "@movie/shared-auth": "0.1.0",
     "@movie/shared-config": "0.1.0",
-    "@movie/shared-dto": "0.1.0"
+    "@movie/shared-dto": "0.1.0",
+    "@movie/shared-kafka": "0.1.0",
+    "@movie/object-storage": "0.1.0",
+    "@nestjs/typeorm": "11.0.0",
+    "ioredis": "5.8.2",
+    "kafkajs": "2.2.4",
+    "typeorm": "0.3.31"
   }
 }

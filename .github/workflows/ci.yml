@@ -38,10 +38,17 @@ jobs:
           npm run smoke:profile-ci
           npm run smoke:catalog-ci
           npm run smoke:payment-ci
+          npm run smoke:streaming-ci
+      - name: Start media infrastructure and verify owned HLS
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg
+          npm run infra:media
+          npm run smoke:owned-media-ci
           node scripts/infra-persistence.mjs mark
           sleep 2
           docker compose --profile core restart postgres redis kafka
-          docker compose --profile core up --detach --wait
+          docker compose --profile core --profile media up --detach --wait
           node scripts/infra-persistence.mjs verify
           npm run infra:bootstrap
       - name: Stop test infrastructure

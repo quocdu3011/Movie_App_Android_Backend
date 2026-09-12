@@ -2,8 +2,12 @@
   "extends": "../../tsconfig.json",
   "compilerOptions": { "composite": true, "rootDir": "src", "outDir": "../../dist/apps/streaming-service" },
   "references": [
+    { "path": "../../libs/shared-auth" },
     { "path": "../../libs/shared-config" },
-    { "path": "../../libs/shared-dto" }
+    { "path": "../../libs/shared-dto" },
+    { "path": "../../libs/shared-kafka" },
+    { "path": "../../libs/object-storage" },
+    { "path": "../../libs/content-provider" }
   ],
   "include": ["src/**/*.ts"]
 }

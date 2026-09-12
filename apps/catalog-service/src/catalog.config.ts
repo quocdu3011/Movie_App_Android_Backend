@@ -8,6 +8,7 @@ export interface CatalogConfig {
   port: number;
   databaseUrl: string;
   gatewayToken: string;
+  streamingToken: string;
   profileUrl: string;
   profileToken: string;
   providerBaseUrl: string;
@@ -46,7 +47,9 @@ export function loadCatalogConfig(env: NodeJS.ProcessEnv = process.env): Catalog
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 500 || timeoutMs > 15_000) throw new Error('KKPHIM_TIMEOUT_MS must be an integer from 500 to 15000');
   const pollMs = Number(env.CATALOG_SYNC_POLL_MS ?? 750);
   if (!Number.isSafeInteger(pollMs) || pollMs < 250 || pollMs > 60_000) throw new Error('CATALOG_SYNC_POLL_MS must be an integer from 250 to 60000');
-  return { port: service.port, databaseUrl, gatewayToken, profileUrl, profileToken, providerBaseUrl, providerTimeoutMs: timeoutMs, syncPollMs: pollMs, nodeEnv: service.nodeEnv };
+  const streamingToken = tokenFor(env.CATALOG_INTERNAL_TOKENS_JSON, 'streaming-service', 'CATALOG_INTERNAL_TOKENS_JSON');
+  if (streamingToken === gatewayToken) throw new Error('Catalog internal tokens must be unique per caller');
+  return { port: service.port, databaseUrl, gatewayToken, streamingToken, profileUrl, profileToken, providerBaseUrl, providerTimeoutMs: timeoutMs, syncPollMs: pollMs, nodeEnv: service.nodeEnv };
 }
 
 export function validGatewayToken(candidate: string | undefined, config: CatalogConfig): boolean {
