@@ -2,8 +2,10 @@
   "extends": "../../tsconfig.json",
   "compilerOptions": { "composite": true, "rootDir": "src", "outDir": "../../dist/apps/profile-service" },
   "references": [
+    { "path": "../../libs/shared-auth" },
     { "path": "../../libs/shared-config" },
-    { "path": "../../libs/shared-dto" }
+    { "path": "../../libs/shared-dto" },
+    { "path": "../../libs/shared-kafka" }
   ],
   "include": ["src/**/*.ts"]
 }

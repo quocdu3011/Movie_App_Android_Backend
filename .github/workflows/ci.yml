@@ -35,6 +35,7 @@ jobs:
           npm run infra:up
           npm run infra:bootstrap
           npm run smoke:auth-ci
+          npm run smoke:profile-ci
           node scripts/infra-persistence.mjs mark
           sleep 2
           docker compose --profile core restart postgres redis kafka
