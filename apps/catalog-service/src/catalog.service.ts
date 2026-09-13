@@ -215,10 +215,22 @@ export class CatalogService {
     for (const movieId of uniqueIds) {
       const row = byId.get(movieId);
       const visible = Boolean(row && row.status === 'published' && (!isKids || row.is_kids_safe));
-      if (visible && row) output.push({ movieId, movie: publicMovie(row), tombstone: false });
+      if (visible && row) {
+        const genres = await this.dataSource.query(`SELECT g.slug,g.name FROM movie_genres mg JOIN genres g ON g.id=mg.genre_id WHERE mg.movie_id=$1 ORDER BY g.slug`, [movieId]);
+        output.push({ movieId, movie: { ...publicMovie(row), genres }, tombstone: false });
+      }
       else if (includeTombstones) output.push({ movieId, movie: null, tombstone: true });
     }
     return output;
+  }
+
+  async recommendationCandidates(genreSlugs: string[], excludeMovieIds: string[], isKids: boolean, limit: number) {
+    const values: unknown[] = [isKids, Math.min(50, Math.max(1, limit)), excludeMovieIds];
+    const genres = [...new Set(genreSlugs)].slice(0, 20);
+    const genreFilter = genres.length ? `AND EXISTS(SELECT 1 FROM movie_genres mg JOIN genres g ON g.id=mg.genre_id WHERE mg.movie_id=m.id AND g.slug = ANY($4::text[]))` : '';
+    if (genres.length) values.push(genres);
+    const rows = await this.dataSource.query(`SELECT m.* FROM movies m WHERE m.status='published' AND ($1::boolean=false OR m.is_kids_safe=true) AND NOT (m.id = ANY($3::uuid[])) ${genreFilter} ORDER BY m.published_at DESC NULLS LAST,m.id ASC LIMIT $2`, values) as MovieRow[];
+    return rows.map(publicMovie);
   }
 
   async home(pageSize = 20) {

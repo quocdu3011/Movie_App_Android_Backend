@@ -246,6 +246,11 @@ Các timeout, retry, concurrency, cache và endpoint MovieApp nằm trong mục 
 - Các fixture chứng minh hợp đồng mà dự án hỗ trợ, không chứng minh KKPhim đang trả đúng shape tại thời điểm chạy. Không có test hosted nào gọi Internet/provider thật trong G3.
 - Smoke live đọc-only ngày 2026-09-12 dùng `npm run smoke:kkphim-live`: discovery legacy trang 1 parse được 24 mục; search v1 parse được (1–20 kết quả trong hai lượt, theo keyword); detail khớp ID/slug và chuẩn hóa thành series hoạt hình, 1 server/479 selector, rating 9.5; resolver chọn được `external_hls`. URL chỉ ở bộ nhớ resolver, không xuất hiện trong projection/log và smoke không kết nối/ghi DB. Đây là một mẫu động, không phải cam kết schema/quota/SLA; smoke không tải HLS manifest hoặc segment.
 
+### Nghiệm thu fixture G9
+
+- `npm run test:e2e` ngày 2026-09-13 chạy offline với fixture legacy/v1, phim lẻ/series, nhiều server, `Full`/special, đổi slug/server và URL HLS. Import giữ canonical `_id` và playable ID; metadata lock không giữ URL cũ. Resolver luôn đọc detail mới, match selector chính xác, từ chối host không allowlist và không lưu URL hoặc tạo `video_assets` cho nguồn ngoài.
+- HLS third-party được tải manifest và segment từ HTTPS fixture, rồi kiểm tra progress/resume, favorites/history, archive/out-of-order event, provider 503 recovery và release lease. Đây là kiểm tra luồng MovieApp + fixture, không phải xác nhận KKPhim/CDN thật hay Android Media3.
+
 ## Nguồn
 
 - [KKPhim API Documentation](https://kkphim.com/api-document) — đối chiếu ngày 2026-09-12.

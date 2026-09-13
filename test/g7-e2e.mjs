@@ -5,6 +5,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
+import { performance } from 'node:perf_hooks';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -67,6 +68,8 @@ async function waitFor(check, message) {
   }
   throw new Error(message);
 }
+
+function p95(samples) { return [...samples].sort((left, right) => left - right)[Math.ceil(samples.length * 0.95) - 1]; }
 
 const suffix = randomUUID().replaceAll('-', '');
 const gatewayToken = `g7-gateway-${randomUUID()}-${randomUUID()}`;
@@ -160,6 +163,22 @@ try {
   assert.equal(kidsSearch.status, 200, JSON.stringify(kidsSearch.body));
   assert.deepEqual(kidsSearch.body.data.items.map((item) => item.id), [safe.movieId], 'kids search must be rechecked against current Catalog publication/kids state');
   console.log('PASS G7 search: Vietnamese accent folding, OpenSearch filters and stable pagination pass with current Catalog recheck');
+  if (process.env.G9_LOAD === 'true') {
+    const warmup = await request(urls.gateway, '/catalog/home?pageSize=20');
+    assert.equal(warmup.status, 200);
+    assert.equal(warmup.headers.get('cache-control'), 'public, max-age=300', 'catalog response remains cacheable for shared HTTP caches');
+    const timings = [];
+    const responses = await Promise.all(Array.from({ length: 50 }, async () => {
+      const startedAt = performance.now();
+      const response = await request(urls.gateway, '/catalog/home?pageSize=20');
+      timings.push(performance.now() - startedAt);
+      return response;
+    }));
+    assert.equal(responses.every((response) => response.status === 200 && response.headers.get('cache-control') === 'public, max-age=300'), true, 'catalog load requests must stay successful and cacheable');
+    const value = p95(timings);
+    assert.ok(value < 500, `cacheable catalog p95 must remain below 500ms, received ${value.toFixed(2)}ms`);
+    console.log(`G9_METRIC catalog_cacheable_p95_ms=${value.toFixed(2)} requests=${timings.length} concurrency=50`);
+  }
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const favorite = await request(urls.gateway, `/profiles/${profile.body.data.id}/favorites/${safe.movieId}`, { method: 'PUT', token: owner.body.data.accessToken });

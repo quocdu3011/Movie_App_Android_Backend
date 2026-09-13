@@ -6,6 +6,7 @@ import { createServer as createHttpsServer } from 'node:https';
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { performance } from 'node:perf_hooks';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -80,6 +81,8 @@ async function waitFor(fn, message, attempts = 100) {
   }
   throw new Error(message);
 }
+
+function p95(samples) { return [...samples].sort((left, right) => left - right)[Math.ceil(samples.length * 0.95) - 1]; }
 
 function idFromJwt(token) {
   return JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8')).sid;
@@ -430,6 +433,19 @@ try {
   const third = await createPlayback(ownerProfile, free);
   assert.equal(third.status, 201, JSON.stringify(third.body));
   assert.equal(third.body.data.resumePositionSeconds, 10, 'new session resumes from committed PostgreSQL progress');
+  if (process.env.G9_LOAD === 'true') {
+    const durations = [];
+    for (let offset = 0; offset < 50; offset += 10) {
+      const batch = await Promise.all(Array.from({ length: 10 }, async (_, index) => {
+        const startedAt = performance.now();
+        const response = await request(gatewayUrl, `/streaming/playback-sessions/${third.body.data.sessionId}/progress`, { method: 'POST', token: owner.accessToken, body: { seq: String(1_000 + offset + index), positionSeconds: 20 + offset + index, durationSeconds: 120 } });
+        durations.push(performance.now() - startedAt);
+        return response;
+      }));
+      assert.equal(batch.every((response) => response.status === 200), true, 'all progress-load requests must receive a durable response');
+    }
+    console.log(`G9_METRIC progress_write_p95_ms=${p95(durations).toFixed(2)} requests=${durations.length} concurrency=10`);
+  }
   await playbackEvent(ownerProfile, third.body.data.sessionId, 'stopped');
   console.log('PASS G5 playback: fresh KKPhim URL, actual HLS fixture, session idempotency, slot limit, ownership, heartbeat, rewind/order/resume, qualified outbox');
 

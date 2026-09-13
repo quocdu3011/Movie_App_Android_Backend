@@ -82,6 +82,11 @@ export class S3ObjectStorage {
     if (!response.ok) throw new Error(`Object storage PUT failed: ${response.status}`);
   }
 
+  async remove(bucket: string, key: string): Promise<void> {
+    const response = await this.request('DELETE', bucket, key);
+    if (!response.ok && response.status !== 404) throw new Error(`Object storage DELETE failed: ${response.status}`);
+  }
+
   async ensureBucket(bucket: string): Promise<void> {
     if (!/^[a-z0-9][a-z0-9.-]{2,62}$/.test(bucket)) throw new Error('Bucket name is invalid');
     const response = await this.requestBucket('PUT', bucket);
@@ -94,7 +99,7 @@ export class S3ObjectStorage {
     return result;
   }
 
-  private async request(method: 'GET' | 'HEAD' | 'PUT', bucket: string, key: string, body?: Buffer, additionalHeaders: Record<string, string> = {}): Promise<Response> {
+  private async request(method: 'GET' | 'HEAD' | 'PUT' | 'DELETE', bucket: string, key: string, body?: Buffer, additionalHeaders: Record<string, string> = {}): Promise<Response> {
     const now = new Date();
     const { date, timestamp } = utcStamp(now);
     const payloadHash = sha256(body ?? '');

@@ -15,7 +15,7 @@ interface ProfileRequest extends Request {
   requestId?: string;
 }
 
-const INTERNAL_CALLERS = new Set(['api-gateway', 'streaming-service', 'catalog-service']);
+const INTERNAL_CALLERS = new Set(['api-gateway', 'streaming-service', 'catalog-service', 'recommendation-service']);
 
 function authenticate(request: ProfileRequest, config: ProfileConfig): string {
   const token = parseBearerToken(request.header('authorization'));

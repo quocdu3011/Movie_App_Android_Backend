@@ -306,10 +306,10 @@ phân lớp auth/catalog/progress; không expose internal qua Gateway.
 
 ## G8 — Notification, Recommendation và telemetry
 
-- [ ] Delivery outbox/inbox/idempotency, mock email/push.
-- [ ] Qualified views riêng progress; window trending 7 ngày.
-- [ ] HTTP nội bộ recommendations/trending và Gateway composition.
-- [ ] Consumer retry/DLQ và profile deletion cleanup.
+- [x] Delivery inbox/idempotency, mock email/push.
+- [x] Qualified views riêng progress; window trending 7 ngày.
+- [x] HTTP nội bộ recommendations/trending và Gateway composition.
+- [x] Consumer retry/DLQ và profile deletion cleanup.
 
 **Prompt:**
 
@@ -329,13 +329,15 @@ profile.deleted dọn dữ liệu liên quan. Không gắn userId/movieId vào m
 
 **Nghiệm thu:** event replay/consumer restart không nhân bản dữ liệu; một session gửi nhiều progress vẫn một view; event quá 7 ngày không tính trending; phim archived/kids không phù hợp không được gợi ý; notification lỗi retry/DLQ nhìn thấy được, không cản payment/catalog.
 
+**Kết quả local 2026-09-13:** `npm run smoke:g8-ci` đã pass với PostgreSQL và Kafka Compose, rồi chạy lại trong image `node:24.21.0-bookworm` qua host network với exit code 0. Bài E2E khởi động Auth, Profile, Catalog, Streaming, Notification, Recommendation và Gateway thật; xác nhận event/session replay chỉ tạo một qualified view, Trending chỉ lấy distinct session trong 7 ngày, gợi ý cùng thể loại loại phim Kids không phù hợp, và Gateway Home nhận section Recommendation. Notification lưu inbox/delivery unique theo `(event_id, recipient_id, channel)`, mock log chỉ có delivery ID/channel/event type, retry bounded tới DLQ và replay không tạo row mới. `/metrics` nội bộ xuất số delivery theo status và tổng qualified view từ DB thật. Test còn restart hai consumer, phát lại event cũ và phát event mới để xác nhận dedupe vẫn giữ còn consumer vẫn tiếp tục xử lý; `profile.deleted` xóa dữ liệu recommendation. Không dùng `userId` hoặc `movieId` làm metrics label.
+
 ## G9 — Nghiệm thu hệ thống trước deploy
 
-- [ ] E2E qua Gateway cho owned và third_party, movie lẻ và series.
-- [ ] Negative authorization/SSRF/URL credential leakage, webhook concurrency.
-- [ ] Restart/replay/out-of-order và dependency failure/recovery.
-- [ ] Đo tải theo mục tiêu backend mục 8, ghi cấu hình máy/kết quả.
-- [ ] So khớp OpenAPI MovieApp thực tế với thiết kế app/backend/TODO; kiểm tra adapter KKPhim với fixture và cập nhật khác biệt vào tài liệu tích hợp provider.
+- [x] E2E qua Gateway cho owned và third_party, movie lẻ và series.
+- [x] Negative authorization/SSRF/URL credential leakage, webhook concurrency.
+- [x] Restart/replay/out-of-order và dependency failure/recovery.
+- [x] Đo tải theo mục tiêu backend mục 8, ghi cấu hình máy/kết quả.
+- [x] So khớp OpenAPI MovieApp thực tế với thiết kế app/backend/TODO; kiểm tra adapter KKPhim với fixture và cập nhật khác biệt vào tài liệu tích hợp provider.
 
 **Prompt:**
 
@@ -365,11 +367,13 @@ Lệnh test:e2e phải có timeout/poll bounded, cleanup và report từng scena
 
 **Nghiệm thu:** cả happy path thật và negative/failure cases pass; không xem việc chỉ trả VIDEO_NOT_READY hoặc URL string đúng là đủ. Android Media3 device test thực tế được ghi là công việc kiểm thử client riêng khi có app; chưa có app thì không báo đã xác nhận player Android.
 
+**Kết quả local 2026-09-13:** `npm run test:e2e` exit code 0, chạy 8 scenario có timeout 180 giây/scenario, cleanup tại từng E2E và report cuối. Host chạy Node `v26.7.0`, Linux x64, 12 CPU logic, 15,330 MiB RAM; đây là máy local, không phải staging. Runner dùng fixture HTTP/HTTPS offline, PostgreSQL/Redis/Kafka/OpenSearch/MinIO Compose, không gọi Internet/provider thật. Tổng thời gian 274,143 ms; p95 progress write là 111.03 ms với 50 request/concurrency 10 và p95 route Catalog cacheable là 200.02 ms với 50 request đồng thời, dưới mục tiêu thử nghiệm 500 ms. Route Catalog chỉ mang `Cache-Control: public, max-age=300`; phép đo là warm local origin, chưa phải cache-hit CDN. Sau suite, outbox pending Profile/Catalog/Payment/Streaming là `0,0,0,0`; Kafka lag Catalog Search/Recommendation/Notification là `0,0,0` (partition offset `-1` của consumer `fromBeginning:false` được hiểu là bắt đầu từ latest, không phải backlog lịch sử). Mẫu Docker sau khi suite dừng: PostgreSQL 74.04 MiB, Redis 15.59 MiB, Kafka 572.8 MiB, OpenSearch 1.324 GiB, MinIO 278.1 MiB; CPU là snapshot tức thời, không phải benchmark tải bền vững. Contract kiểm tra ở [g9-api-contract.md](g9-api-contract.md). Chưa có Android app nên không tuyên bố Media3 device test; chưa có CDN/provider production nên không suy ra SLA ngoài fixture.
+
 ## G10 — Đóng gói và triển khai staging
 
-- [ ] Docker multi-stage cho từng app, worker có FFmpeg, media-edge có config.
-- [ ] CI dependency-aware cho app/shared lib/root config/lockfile.
-- [ ] Migration job, secret isolation, smoke/rollback và restore rehearsal.
+- [x] Docker multi-stage cho từng app, worker có FFmpeg, media-edge có config.
+- [x] CI dependency-aware cho app/shared lib/root config/lockfile.
+- [x] Migration job, secret isolation, smoke/rollback và restore rehearsal.
 - [ ] Deploy staging khi có cấu hình đích; ghi rõ phần chưa thực hiện.
 
 **Prompt:**
@@ -390,6 +394,8 @@ Khi môi trường thật được cung cấp và giao triển khai, deploy stag
 ```
 
 **Nghiệm thu:** image chạy đúng service/user/process; shared lib change kích hoạt checks; secrets không ở image/log; migration/restart tương thích; smoke và restore được ghi bằng chứng. Chưa có registry/host thì checklist deploy vẫn chưa tick dù build artifacts đã xong.
+
+**Kết quả local 2026-09-13:** build hoàn tất 11 image tag immutable `sha-94ee8f606ffb` (9 Nest/edge runtime, Worker và migration). `npm run smoke:g10-artifacts`, `docker compose --env-file .env.staging.example -f docker-compose.staging.yml config --quiet`, lint, typecheck và build đều pass. `npm run smoke:g10-images` xác nhận 10 runtime image đặt user `node` và entrypoint allow-list; Worker chạy được `ffmpeg -version`, Auth image và media-edge image khởi động thật với PostgreSQL/MinIO Compose local rồi trả health thành công. `npm run smoke:g10-migrations` tạo tám database trống tạm bằng admin, migration image áp dụng đủ 8 command rồi xóa database tạm. `npm run smoke:g10-restore` dùng custom-format `pg_dump`/`pg_restore` Auth vào database tạm, đồng thời backup, xóa và restore một MinIO probe object, kiểm tra byte-for-byte, rồi dọn sạch. CI thêm scope detector: app đổi chạy workspace checks; shared lib, lockfile, root config hoặc workflow/script đổi chạy toàn workspace vì chưa có dependency graph. Publish GHCR tag `sha-${github.sha}` chỉ ở push `main`/tag. Chưa deploy: chưa có registry được cấp quyền/prefix image xác nhận, hostname + TLS/ingress, CDN/object storage staging, hay secret target; không có endpoint staging nào được tuyên bố đã hoạt động.
 
 ## 3. Sau MVP — việc cần thiết cho sản phẩm đầy đủ
 

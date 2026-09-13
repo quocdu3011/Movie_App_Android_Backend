@@ -110,3 +110,10 @@ export class CatalogBatchDto {
   @IsOptional() @IsBoolean() isKids?: boolean;
   @IsOptional() @IsBoolean() includeTombstones?: boolean;
 }
+
+export class RecommendationCandidatesDto {
+  @IsOptional() @IsString({ each: true }) @MaxLength(120, { each: true }) genreSlugs?: string[];
+  @IsOptional() @IsUUID('4', { each: true }) excludeMovieIds?: string[];
+  @IsOptional() @IsBoolean() isKids?: boolean;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(50) limit = 20;
+}

@@ -6,11 +6,11 @@ import { Request } from 'express';
 import { successEnvelope } from '@movie/shared-dto';
 import { CatalogService } from './catalog.service';
 import { CatalogSearchService } from './catalog-search.service';
-import { CatalogGatewayGuard, CatalogProfileGuard, CatalogStreamingGuard } from './catalog-auth.guard';
+import { CatalogGatewayGuard, CatalogProfileGuard, CatalogRecommendationGuard, CatalogStreamingGuard } from './catalog-auth.guard';
 import {
   CatalogQueryDto, CreateContentSourceDto, CreateMovieDto, CreatePlayableDto, CreateSeasonDto,
   CreateSourceItemDto, ImportProviderDto, MetadataLockDto, PatchMovieDto, PatchSourceItemDto,
-  CatalogBatchDto, SearchProviderQueryDto, SourceItemStatusDto, SyncProviderDto,
+  CatalogBatchDto, RecommendationCandidatesDto, SearchProviderQueryDto, SourceItemStatusDto, SyncProviderDto,
 } from './catalog.dto';
 
 interface CatalogRequest extends Request { requestId?: string }
@@ -160,5 +160,17 @@ export class CatalogProfileController {
   @HttpCode(HttpStatus.OK)
   async batch(@Body() body: CatalogBatchDto) {
     return successEnvelope(await this.catalog.batchMovies(body.movieIds, body.isKids === true, body.includeTombstones === true));
+  }
+}
+
+@Controller('internal/catalog/recommendations')
+@UseGuards(CatalogRecommendationGuard)
+export class CatalogRecommendationController {
+  constructor(private readonly catalog: CatalogService) {}
+
+  @Post('candidates')
+  @HttpCode(HttpStatus.OK)
+  async candidates(@Body() body: RecommendationCandidatesDto) {
+    return successEnvelope(await this.catalog.recommendationCandidates(body.genreSlugs ?? [], body.excludeMovieIds ?? [], body.isKids === true, body.limit));
   }
 }

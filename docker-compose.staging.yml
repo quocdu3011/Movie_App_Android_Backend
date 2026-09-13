@@ -1,0 +1,253 @@
+name: movieapp-staging
+
+x-runtime: &runtime
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp:noexec,nosuid,size=64m
+  security_opt:
+    - no-new-privileges:true
+  networks: [backend]
+  deploy:
+    resources:
+      limits: { cpus: "1.00", memory: 768M }
+      reservations: { cpus: "0.10", memory: 128M }
+
+services:
+  migrations:
+    image: movieapp/migrations:${IMAGE_TAG:?Set IMAGE_TAG to an immutable sha tag}
+    profiles: [migration]
+    restart: "no"
+    read_only: true
+    tmpfs: [/tmp:noexec,nosuid,size=64m]
+    security_opt: [no-new-privileges:true]
+    networks: [backend]
+    environment: &migration_environment
+      NODE_ENV: staging
+      AUTH_DATABASE_URL: ${AUTH_DATABASE_URL:?}
+      PROFILE_DATABASE_URL: ${PROFILE_DATABASE_URL:?}
+      CATALOG_DATABASE_URL: ${CATALOG_DATABASE_URL:?}
+      PAYMENT_DATABASE_URL: ${PAYMENT_DATABASE_URL:?}
+      STREAMING_DATABASE_URL: ${STREAMING_DATABASE_URL:?}
+      WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:?}
+      NOTIFICATION_DATABASE_URL: ${NOTIFICATION_DATABASE_URL:?}
+      RECOMMENDATION_DATABASE_URL: ${RECOMMENDATION_DATABASE_URL:?}
+      KAFKA_BROKERS: ${KAFKA_BROKERS:?}
+      PROFILE_INTERNAL_TOKENS_JSON: ${PROFILE_INTERNAL_TOKENS_JSON:?}
+      CATALOG_INTERNAL_TOKENS_JSON: ${CATALOG_INTERNAL_TOKENS_JSON:?}
+      PAYMENT_INTERNAL_TOKENS_JSON: ${PAYMENT_INTERNAL_TOKENS_JSON:?}
+      STREAMING_INTERNAL_TOKENS_JSON: ${STREAMING_INTERNAL_TOKENS_JSON:?}
+      STREAMING_DOWNSTREAM_TOKENS_JSON: ${STREAMING_DOWNSTREAM_TOKENS_JSON:?}
+      NOTIFICATION_INTERNAL_TOKENS_JSON: ${NOTIFICATION_INTERNAL_TOKENS_JSON:?}
+      RECOMMENDATION_INTERNAL_TOKENS_JSON: ${RECOMMENDATION_INTERNAL_TOKENS_JSON:?}
+      PROFILE_CATALOG_TOKEN: ${PROFILE_CATALOG_TOKEN:?}
+      PROFILE_STREAMING_TOKEN: ${PROFILE_STREAMING_TOKEN:?}
+      RECOMMENDATION_CATALOG_TOKEN: ${RECOMMENDATION_CATALOG_TOKEN:?}
+      RECOMMENDATION_PROFILE_TOKEN: ${RECOMMENDATION_PROFILE_TOKEN:?}
+      AUTH_SERVICE_URL: http://auth-service:3001
+      PROFILE_SERVICE_URL: http://profile-service:3002
+      CATALOG_SERVICE_URL: http://catalog-service:3003
+      PAYMENT_SERVICE_URL: http://payment-service:3004
+      STREAMING_SERVICE_URL: http://streaming-service:3005
+      REDIS_URL: ${REDIS_URL:?}
+      KKPHIM_MEDIA_HOST_ALLOWLIST: ${KKPHIM_MEDIA_HOST_ALLOWLIST:?}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:?}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?}
+      MEDIA_AUTH_SECRET: ${MEDIA_AUTH_SECRET:?}
+      MEDIA_EDGE_URL: http://media-edge:8081
+      OPENSEARCH_URL: ${OPENSEARCH_URL:?}
+
+  auth-service:
+    <<: *runtime
+    image: movieapp/auth-service:${IMAGE_TAG:?Set IMAGE_TAG to an immutable sha tag}
+    environment:
+      NODE_ENV: staging
+      AUTH_PORT: 3001
+      AUTH_DATABASE_URL: ${AUTH_DATABASE_URL:?}
+      AUTH_JWT_ISSUER: ${AUTH_JWT_ISSUER:?}
+      AUTH_JWT_AUDIENCE: ${AUTH_JWT_AUDIENCE:?}
+      AUTH_JWT_KID: ${AUTH_JWT_KID:?}
+      AUTH_JWKS_PREVIOUS_PUBLIC_KEYS_JSON: "{}"
+      AUTH_PRIVATE_KEY_PATH: /run/secrets/auth_private_key
+      AUTH_PUBLIC_KEY_PATH: /run/secrets/auth_public_key
+      AUTH_INTERNAL_TOKENS_JSON: ${AUTH_INTERNAL_TOKENS_JSON:?}
+    secrets: [auth_private_key, auth_public_key]
+    healthcheck: &health_auth
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+
+  api-gateway:
+    <<: *runtime
+    image: movieapp/api-gateway:${IMAGE_TAG:?Set IMAGE_TAG to an immutable sha tag}
+    ports: ["${STAGING_GATEWAY_PORT:-3000}:3000"]
+    environment:
+      NODE_ENV: staging
+      GATEWAY_PORT: 3000
+      AUTH_SERVICE_URL: http://auth-service:3001
+      PROFILE_SERVICE_URL: http://profile-service:3002
+      CATALOG_SERVICE_URL: http://catalog-service:3003
+      PAYMENT_SERVICE_URL: http://payment-service:3004
+      STREAMING_SERVICE_URL: http://streaming-service:3005
+      RECOMMENDATION_SERVICE_URL: http://recommendation-service:3008
+      GATEWAY_SERVICE_TOKEN: ${GATEWAY_SERVICE_TOKEN:?}
+      AUTH_JWT_ISSUER: ${AUTH_JWT_ISSUER:?}
+      AUTH_JWT_AUDIENCE: ${AUTH_JWT_AUDIENCE:?}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?}
+    healthcheck:
+      <<: *health_auth
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/auth/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+
+  profile-service:
+    <<: *runtime
+    image: movieapp/profile-service:${IMAGE_TAG:?Set IMAGE_TAG to an immutable sha tag}
+    environment:
+      NODE_ENV: staging
+      PROFILE_PORT: 3002
+      PROFILE_DATABASE_URL: ${PROFILE_DATABASE_URL:?}
+      PROFILE_INTERNAL_TOKENS_JSON: ${PROFILE_INTERNAL_TOKENS_JSON:?}
+      PROFILE_KAFKA_BROKERS: ${KAFKA_BROKERS:?}
+      PROFILE_CATALOG_TOKEN: ${PROFILE_CATALOG_TOKEN:?}
+      PROFILE_STREAMING_TOKEN: ${PROFILE_STREAMING_TOKEN:?}
+      CATALOG_SERVICE_URL: http://catalog-service:3003
+      STREAMING_SERVICE_URL: http://streaming-service:3005
+    healthcheck:
+      <<: *health_auth
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3002/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+
+  catalog-service:
+    <<: *runtime
+    image: movieapp/catalog-service:${IMAGE_TAG:?Set IMAGE_TAG to an immutable sha tag}
+    environment:
+      NODE_ENV: staging
+      CATALOG_PORT: 3003
+      CATALOG_DATABASE_URL: ${CATALOG_DATABASE_URL:?}
+      CATALOG_INTERNAL_TOKENS_JSON: ${CATALOG_INTERNAL_TOKENS_JSON:?}
+      PROFILE_INTERNAL_TOKENS_JSON: ${PROFILE_INTERNAL_TOKENS_JSON:?}
+      PROFILE_SERVICE_URL: http://profile-service:3002
+      KKPHIM_API_BASE_URL: ${KKPHIM_API_BASE_URL:?}
+      KKPHIM_TIMEOUT_MS: ${KKPHIM_TIMEOUT_MS:-5000}
+      CATALOG_KAFKA_BROKERS: ${KAFKA_BROKERS:?}
+      OPENSEARCH_URL: ${OPENSEARCH_URL:?}
+    healthcheck:
+      <<: *health_auth
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3003/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+
+  payment-service:
+    <<: *runtime
+    image: movieapp/payment-service:${IMAGE_TAG:?Set IMAGE_TAG to an immutable sha tag}
+    environment:
+      NODE_ENV: staging
+      PAYMENT_PORT: 3004
+      PAYMENT_DATABASE_URL: ${PAYMENT_DATABASE_URL:?}
+      PAYMENT_INTERNAL_TOKENS_JSON: ${PAYMENT_INTERNAL_TOKENS_JSON:?}
+      PAYMENT_MOCK_ENABLED: "false"
+      KAFKA_BROKERS: ${KAFKA_BROKERS:?}
+    healthcheck:
+      <<: *health_auth
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3004/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+
+  streaming-service:
+    <<: *runtime
+    image: movieapp/streaming-service:${IMAGE_TAG:?Set IMAGE_TAG to an immutable sha tag}
+    environment:
+      NODE_ENV: staging
+      STREAMING_PORT: 3005
+      STREAMING_DATABASE_URL: ${STREAMING_DATABASE_URL:?}
+      REDIS_URL: ${REDIS_URL:?}
+      KAFKA_BROKERS: ${KAFKA_BROKERS:?}
+      STREAMING_INTERNAL_TOKENS_JSON: ${STREAMING_INTERNAL_TOKENS_JSON:?}
+      STREAMING_DOWNSTREAM_TOKENS_JSON: ${STREAMING_DOWNSTREAM_TOKENS_JSON:?}
+      AUTH_SERVICE_URL: http://auth-service:3001
+      PROFILE_SERVICE_URL: http://profile-service:3002
+      CATALOG_SERVICE_URL: http://catalog-service:3003
+      PAYMENT_SERVICE_URL: http://payment-service:3004
+      KKPHIM_API_BASE_URL: ${KKPHIM_API_BASE_URL:?}
+      KKPHIM_MEDIA_HOST_ALLOWLIST: ${KKPHIM_MEDIA_HOST_ALLOWLIST:?}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:?}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?}
+      MEDIA_AUTH_SECRET: ${MEDIA_AUTH_SECRET:?}
+      MEDIA_EDGE_URL: http://media-edge:8081
+    healthcheck:
+      <<: *health_auth
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3005/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+
+  transcode-worker:
+    <<: *runtime
+    image: movieapp/transcode-worker:${IMAGE_TAG:?Set IMAGE_TAG to an immutable sha tag}
+    environment:
+      NODE_ENV: staging
+      TRANSCODE_PORT: 3010
+      WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:?}
+      KAFKA_BROKERS: ${KAFKA_BROKERS:?}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:?}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?}
+      WORKER_STREAMING_TOKEN: ${WORKER_STREAMING_TOKEN:?}
+      STREAMING_SERVICE_URL: http://streaming-service:3005
+    healthcheck:
+      <<: *health_auth
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3010/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+
+  notification-service:
+    <<: *runtime
+    image: movieapp/notification-service:${IMAGE_TAG:?Set IMAGE_TAG to an immutable sha tag}
+    environment:
+      NODE_ENV: staging
+      NOTIFICATION_PORT: 3007
+      NOTIFICATION_DATABASE_URL: ${NOTIFICATION_DATABASE_URL:?}
+      NOTIFICATION_INTERNAL_TOKENS_JSON: ${NOTIFICATION_INTERNAL_TOKENS_JSON:?}
+      KAFKA_BROKERS: ${KAFKA_BROKERS:?}
+    healthcheck:
+      <<: *health_auth
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3007/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+
+  recommendation-service:
+    <<: *runtime
+    image: movieapp/recommendation-service:${IMAGE_TAG:?Set IMAGE_TAG to an immutable sha tag}
+    environment:
+      NODE_ENV: staging
+      RECOMMENDATION_PORT: 3008
+      RECOMMENDATION_DATABASE_URL: ${RECOMMENDATION_DATABASE_URL:?}
+      RECOMMENDATION_INTERNAL_TOKENS_JSON: ${RECOMMENDATION_INTERNAL_TOKENS_JSON:?}
+      RECOMMENDATION_CATALOG_TOKEN: ${RECOMMENDATION_CATALOG_TOKEN:?}
+      RECOMMENDATION_PROFILE_TOKEN: ${RECOMMENDATION_PROFILE_TOKEN:?}
+      KAFKA_BROKERS: ${KAFKA_BROKERS:?}
+      CATALOG_SERVICE_URL: http://catalog-service:3003
+      PROFILE_SERVICE_URL: http://profile-service:3002
+    healthcheck:
+      <<: *health_auth
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3008/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+
+  media-edge:
+    <<: *runtime
+    image: movieapp/media-edge:${IMAGE_TAG:?Set IMAGE_TAG to an immutable sha tag}
+    ports: ["${STAGING_MEDIA_EDGE_PORT:-8081}:8081"]
+    environment:
+      NODE_ENV: staging
+      MEDIA_EDGE_PORT: 8081
+      MEDIA_AUTH_SECRET: ${MEDIA_AUTH_SECRET:?}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:?}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?}
+      MINIO_BUCKET_MEDIA: ${MINIO_BUCKET_MEDIA:?}
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8081/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+networks:
+  backend:
+    internal: true
+
+secrets:
+  auth_private_key:
+    file: ${AUTH_PRIVATE_KEY_FILE:?Set path to staging Auth private key}
+  auth_public_key:
+    file: ${AUTH_PUBLIC_KEY_FILE:?Set path to staging Auth public key}
