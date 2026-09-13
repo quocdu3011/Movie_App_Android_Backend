@@ -35,3 +35,18 @@ export class CatalogStreamingGuard implements CanActivate {
     return true;
   }
 }
+
+@Injectable()
+export class CatalogProfileGuard implements CanActivate {
+  constructor(@Inject(CATALOG_CONFIG) private readonly config: CatalogConfig) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    const request = context.switchToHttp().getRequest<Request>();
+    const caller = request.header('x-caller-service');
+    const token = parseBearerToken(request.header('authorization') ?? undefined);
+    if (caller !== 'profile-service' || !token || !constantTimeEquals(token, this.config.profileServiceToken)) {
+      throw new UnauthorizedException('Profile service authentication required');
+    }
+    return true;
+  }
+}

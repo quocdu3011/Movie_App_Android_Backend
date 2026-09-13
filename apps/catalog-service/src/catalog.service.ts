@@ -206,6 +206,21 @@ export class CatalogService {
     return { items: rows.map(publicMovie), page, pageSize, totalItems, totalPages: Math.ceil(totalItems / pageSize) };
   }
 
+  async batchMovies(movieIds: string[], isKids: boolean, includeTombstones: boolean): Promise<Array<{ movieId: string; movie: Record<string, unknown> | null; tombstone: boolean }>> {
+    const uniqueIds = [...new Set(movieIds)].slice(0, 100);
+    if (!uniqueIds.length) return [];
+    const rows = await this.dataSource.query(`SELECT * FROM movies WHERE id = ANY($1::uuid[])`, [uniqueIds]) as MovieRow[];
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const output: Array<{ movieId: string; movie: Record<string, unknown> | null; tombstone: boolean }> = [];
+    for (const movieId of uniqueIds) {
+      const row = byId.get(movieId);
+      const visible = Boolean(row && row.status === 'published' && (!isKids || row.is_kids_safe));
+      if (visible && row) output.push({ movieId, movie: publicMovie(row), tombstone: false });
+      else if (includeTombstones) output.push({ movieId, movie: null, tombstone: true });
+    }
+    return output;
+  }
+
   async home(pageSize = 20) {
     const limit = Math.min(50, Math.max(1, pageSize));
     const rows = await this.dataSource.query(

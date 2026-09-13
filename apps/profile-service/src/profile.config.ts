@@ -9,6 +9,10 @@ export interface ProfileConfig {
   serviceTokens: Map<string, string>;
   kafkaBrokers: string[];
   outboxPollMs: number;
+  catalogUrl: string;
+  catalogToken: string;
+  streamingUrl: string;
+  streamingToken: string;
   nodeEnv: string;
 }
 
@@ -30,6 +34,21 @@ function parseServiceTokens(raw: string): Map<string, string> {
   }
   if (tokens.size === 0) throw new Error('At least one profile service token is required');
   return tokens;
+}
+
+function origin(raw: string | undefined, name: string, fallback: string, nodeEnv: string): string {
+  let parsed: URL;
+  try { parsed = new URL(raw?.trim() || fallback); } catch { throw new Error(`${name} must be a URL`); }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || (nodeEnv === 'production' && parsed.protocol !== 'https:')) {
+    throw new Error(`${name} must be a safe HTTP(S) origin without credentials`);
+  }
+  return parsed.origin;
+}
+
+function downstreamToken(raw: string | undefined, name: string): string {
+  if (!raw) return '';
+  if (raw.trim().length < 32) throw new Error(`${name} must be at least 32 characters`);
+  return raw.trim();
 }
 
 export function loadProfileConfig(env: NodeJS.ProcessEnv = process.env): ProfileConfig {
@@ -56,6 +75,10 @@ export function loadProfileConfig(env: NodeJS.ProcessEnv = process.env): Profile
     serviceTokens: parseServiceTokens(rawTokens),
     kafkaBrokers: brokers,
     outboxPollMs,
+    catalogUrl: origin(env.CATALOG_SERVICE_URL, 'CATALOG_SERVICE_URL', 'http://127.0.0.1:3003', service.nodeEnv),
+    catalogToken: downstreamToken(env.PROFILE_CATALOG_TOKEN, 'PROFILE_CATALOG_TOKEN'),
+    streamingUrl: origin(env.STREAMING_SERVICE_URL, 'STREAMING_SERVICE_URL', 'http://127.0.0.1:3005', service.nodeEnv),
+    streamingToken: downstreamToken(env.PROFILE_STREAMING_TOKEN, 'PROFILE_STREAMING_TOKEN'),
     nodeEnv: service.nodeEnv,
   };
 }

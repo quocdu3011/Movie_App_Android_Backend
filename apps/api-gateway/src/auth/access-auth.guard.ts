@@ -39,7 +39,7 @@ export class AccessAuthGuard implements CanActivate {
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_ROUTE, [
       context.getHandler(), context.getClass(),
     ]);
-    const profileScopedCatalog = request.path.startsWith('/catalog/') && Object.hasOwn(request.query, 'profileId');
+    const profileScopedCatalog = request.path.startsWith('/catalog/') && request.path !== '/catalog/home' && Object.hasOwn(request.query, 'profileId');
     if (isPublic && !profileScopedCatalog) return true;
     const token = parseBearerToken(request.header('authorization'));
     if (!token) throw new UnauthorizedException('Authentication required');

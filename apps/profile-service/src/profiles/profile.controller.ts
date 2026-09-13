@@ -1,5 +1,5 @@
 import {
-  Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post,
+  Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Put,
   Req, UnauthorizedException, UseGuards,
 } from '@nestjs/common';
 import { Request } from 'express';
@@ -47,6 +47,27 @@ export class ProfileController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async delete(@Param('profileId', new ParseUUIDPipe()) profileId: string, @Req() request: ProfileRequest): Promise<void> {
     await this.profiles.delete(authenticatedUserId(request), profileId, request.requestId ?? 'unknown');
+  }
+
+  @Get(':profileId/favorites')
+  async favorites(@Param('profileId', new ParseUUIDPipe()) profileId: string, @Req() request: ProfileRequest) {
+    return successEnvelope(await this.profiles.favorites(authenticatedUserId(request), profileId, request.requestId ?? 'unknown'), request.requestId ?? 'unknown');
+  }
+
+  @Put(':profileId/favorites/:movieId')
+  async favorite(@Param('profileId', new ParseUUIDPipe()) profileId: string, @Param('movieId', new ParseUUIDPipe()) movieId: string, @Req() request: ProfileRequest) {
+    return successEnvelope(await this.profiles.addFavorite(authenticatedUserId(request), profileId, movieId, request.requestId ?? 'unknown'), request.requestId ?? 'unknown');
+  }
+
+  @Delete(':profileId/favorites/:movieId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async removeFavorite(@Param('profileId', new ParseUUIDPipe()) profileId: string, @Param('movieId', new ParseUUIDPipe()) movieId: string, @Req() request: ProfileRequest): Promise<void> {
+    await this.profiles.removeFavorite(authenticatedUserId(request), profileId, movieId);
+  }
+
+  @Get(':profileId/watch-history')
+  async history(@Param('profileId', new ParseUUIDPipe()) profileId: string, @Req() request: ProfileRequest) {
+    return successEnvelope(await this.profiles.history(authenticatedUserId(request), profileId, request.requestId ?? 'unknown'), request.requestId ?? 'unknown');
   }
 }
 

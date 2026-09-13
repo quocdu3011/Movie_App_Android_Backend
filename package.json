@@ -48,6 +48,7 @@
     "smoke:payment-ci": "node test/payment-e2e.mjs",
     "smoke:streaming-ci": "node test/streaming-e2e.mjs",
     "smoke:owned-media-ci": "node test/owned-media-e2e.mjs",
+    "smoke:g7-ci": "node test/g7-e2e.mjs",
     "smoke:kkphim-live": "npm run build && node test/kkphim-live-smoke.mjs",
     "infra:up": "bash scripts/infra-up.sh",
     "infra:bootstrap": "npm run bootstrap:postgres && bash scripts/bootstrap-kafka.sh",

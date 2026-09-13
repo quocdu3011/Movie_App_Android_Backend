@@ -277,10 +277,10 @@ MVP chưa DRM, không cần cloud account thật. Tạo một clip test nhỏ b�
 
 ## G7 — Search, favorites/history và Home composition
 
-- [ ] OpenSearch projection, analyzer tiếng Việt, reindex/update/archive version.
-- [ ] Favorites idempotent và history hydration/tombstone.
-- [ ] Personalized Home tại Gateway, không cache lẫn profile.
-- [ ] Route/authorization matrix đầy đủ, role reports tách đúng service.
+- [x] OpenSearch projection, analyzer tiếng Việt, reindex/update/archive version.
+- [x] Favorites idempotent và history hydration/tombstone.
+- [x] Personalized Home tại Gateway, không cache lẫn profile.
+- [x] Route/authorization matrix đầy đủ, role reports tách đúng service.
 
 **Prompt:**
 
@@ -301,6 +301,8 @@ phân lớp auth/catalog/progress; không expose internal qua Gateway.
 ```
 
 **Nghiệm thu:** query tiếng Việt có/không dấu theo fixture; stable pagination, archive reindex và out-of-order event; favorite cùng movie nhiều nguồn chỉ một lần; không trả profile A cho user B; history archived có tombstone; lỗi recommendation không làm Home lỗi; public catalog không có raw stream URLs hay user progress.
+
+**Kết quả local 2026-09-13:** `npm run smoke:g7-ci` exit code 0 với PostgreSQL, Redis, Kafka và OpenSearch Compose; chạy lại trong image `node:24.21.0-bookworm` qua host network cũng exit code 0. E2E khởi động Auth, Gateway, Profile, Catalog và Streaming thật; kiểm tra analyzer tiếng Việt có/không dấu, phân trang ổn định, recheck kids/publication, archive và một event published cũ không làm phim xuất hiện lại. Bài test cũng xác nhận favorite idempotent/ownership, history hydrate qua Streaming và Catalog với tombstone archive, Home `no-store` fallback khi Recommendation không sẵn sàng, và Catalog home public không mang profile, progress hay playback URL. Đây là bằng chứng local; GitHub Actions hosted chưa được trigger.
 
 ## G8 — Notification, Recommendation và telemetry
 

@@ -1,4 +1,4 @@
-import { Controller, Delete, Get, Inject, Param, Patch, Post, Req, Res, ServiceUnavailableException } from '@nestjs/common';
+import { Controller, Delete, Get, Inject, Param, Patch, Post, Put, Req, Res, ServiceUnavailableException } from '@nestjs/common';
 import { Response } from 'express';
 import { errorEnvelope } from '@movie/shared-dto';
 import { GATEWAY_CONFIG, GatewayConfig } from '../gateway.config';
@@ -26,6 +26,26 @@ export class ProfileProxyController {
   @Delete(':profileId')
   remove(@Param('profileId') profileId: string, @Req() request: AuthenticatedRequest, @Res() response: Response) {
     return this.forward('DELETE', `/profiles/${encodeURIComponent(profileId)}`, undefined, request, response);
+  }
+
+  @Get(':profileId/favorites')
+  favorites(@Param('profileId') profileId: string, @Req() request: AuthenticatedRequest, @Res() response: Response) {
+    return this.forward('GET', `/profiles/${encodeURIComponent(profileId)}/favorites`, undefined, request, response);
+  }
+
+  @Put(':profileId/favorites/:movieId')
+  addFavorite(@Param('profileId') profileId: string, @Param('movieId') movieId: string, @Req() request: AuthenticatedRequest, @Res() response: Response) {
+    return this.forward('PUT', `/profiles/${encodeURIComponent(profileId)}/favorites/${encodeURIComponent(movieId)}`, undefined, request, response);
+  }
+
+  @Delete(':profileId/favorites/:movieId')
+  removeFavorite(@Param('profileId') profileId: string, @Param('movieId') movieId: string, @Req() request: AuthenticatedRequest, @Res() response: Response) {
+    return this.forward('DELETE', `/profiles/${encodeURIComponent(profileId)}/favorites/${encodeURIComponent(movieId)}`, undefined, request, response);
+  }
+
+  @Get(':profileId/watch-history')
+  history(@Param('profileId') profileId: string, @Req() request: AuthenticatedRequest, @Res() response: Response) {
+    return this.forward('GET', `/profiles/${encodeURIComponent(profileId)}/watch-history`, undefined, request, response);
   }
 
   private async forward(

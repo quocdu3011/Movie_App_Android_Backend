@@ -49,7 +49,8 @@ export class CatalogPublicProxyController extends CatalogProxyBase {
   constructor(@Inject(GATEWAY_CONFIG) config: GatewayConfig) { super(config); }
   @Get('home')
   home(@Req() request: AuthenticatedRequest, @Res() response: Response) {
-    return this.forward('GET', request.originalUrl, undefined, request, response);
+    const pageSize = typeof request.query.pageSize === 'string' ? `?pageSize=${encodeURIComponent(request.query.pageSize)}` : '';
+    return this.forward('GET', `/catalog/home${pageSize}`, undefined, request, response);
   }
   @Get('movies')
   movies(@Req() request: AuthenticatedRequest, @Res() response: Response) {

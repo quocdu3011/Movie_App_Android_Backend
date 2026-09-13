@@ -104,3 +104,9 @@ export class SourceItemStatusDto {
 }
 
 export class MetadataLockDto { @IsBoolean() locked!: boolean; }
+
+export class CatalogBatchDto {
+  @IsUUID('4', { each: true }) movieIds!: string[];
+  @IsOptional() @IsBoolean() isKids?: boolean;
+  @IsOptional() @IsBoolean() includeTombstones?: boolean;
+}

@@ -9,20 +9,26 @@ export interface CatalogConfig {
   databaseUrl: string;
   gatewayToken: string;
   streamingToken: string;
+  profileServiceToken: string;
   profileUrl: string;
   profileToken: string;
   providerBaseUrl: string;
   providerTimeoutMs: number;
   syncPollMs: number;
+  opensearchUrl: string;
+  kafkaBrokers: string[];
   nodeEnv: string;
 }
 
-function tokenFor(raw: string | undefined, caller: string, variable: string): string {
+function tokenFor(raw: string | undefined, caller: string, variable: string, required = true): string {
   let parsed: unknown;
   try { parsed = JSON.parse(raw ?? ''); } catch { throw new Error(`${variable} must be a JSON object`); }
   if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') throw new Error(`${variable} must be a JSON object`);
   const token = (parsed as Record<string, unknown>)[caller];
-  if (typeof token !== 'string' || token.trim().length < 32) throw new Error(`${variable} must contain a 32-character ${caller} token`);
+  if (typeof token !== 'string' || token.trim().length < 32) {
+    if (!required && token === undefined) return '';
+    throw new Error(`${variable} must contain a 32-character ${caller} token`);
+  }
   return token.trim();
 }
 
@@ -48,8 +54,12 @@ export function loadCatalogConfig(env: NodeJS.ProcessEnv = process.env): Catalog
   const pollMs = Number(env.CATALOG_SYNC_POLL_MS ?? 750);
   if (!Number.isSafeInteger(pollMs) || pollMs < 250 || pollMs > 60_000) throw new Error('CATALOG_SYNC_POLL_MS must be an integer from 250 to 60000');
   const streamingToken = tokenFor(env.CATALOG_INTERNAL_TOKENS_JSON, 'streaming-service', 'CATALOG_INTERNAL_TOKENS_JSON');
-  if (streamingToken === gatewayToken) throw new Error('Catalog internal tokens must be unique per caller');
-  return { port: service.port, databaseUrl, gatewayToken, streamingToken, profileUrl, profileToken, providerBaseUrl, providerTimeoutMs: timeoutMs, syncPollMs: pollMs, nodeEnv: service.nodeEnv };
+  const profileServiceToken = tokenFor(env.CATALOG_INTERNAL_TOKENS_JSON, 'profile-service', 'CATALOG_INTERNAL_TOKENS_JSON', false);
+  if (new Set([gatewayToken, streamingToken, ...(profileServiceToken ? [profileServiceToken] : [])]).size !== (profileServiceToken ? 3 : 2)) throw new Error('Catalog internal tokens must be unique per caller');
+  const opensearchUrl = httpOrigin(env.OPENSEARCH_URL?.trim() ?? 'http://127.0.0.1:9200', 'OPENSEARCH_URL', service.nodeEnv !== 'production');
+  const kafkaBrokers = (env.CATALOG_KAFKA_BROKERS ?? env.KAFKA_BROKERS ?? '127.0.0.1:19092').split(',').map((item) => item.trim()).filter(Boolean);
+  if (!kafkaBrokers.length || kafkaBrokers.some((item) => !/^[a-zA-Z0-9.-]+:\d{1,5}$/.test(item))) throw new Error('CATALOG_KAFKA_BROKERS must contain host:port values');
+  return { port: service.port, databaseUrl, gatewayToken, streamingToken, profileServiceToken, profileUrl, profileToken, providerBaseUrl, providerTimeoutMs: timeoutMs, syncPollMs: pollMs, opensearchUrl, kafkaBrokers, nodeEnv: service.nodeEnv };
 }
 
 export function validGatewayToken(candidate: string | undefined, config: CatalogConfig): boolean {

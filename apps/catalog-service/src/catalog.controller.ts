@@ -5,11 +5,12 @@ import {
 import { Request } from 'express';
 import { successEnvelope } from '@movie/shared-dto';
 import { CatalogService } from './catalog.service';
-import { CatalogGatewayGuard, CatalogStreamingGuard } from './catalog-auth.guard';
+import { CatalogSearchService } from './catalog-search.service';
+import { CatalogGatewayGuard, CatalogProfileGuard, CatalogStreamingGuard } from './catalog-auth.guard';
 import {
   CatalogQueryDto, CreateContentSourceDto, CreateMovieDto, CreatePlayableDto, CreateSeasonDto,
   CreateSourceItemDto, ImportProviderDto, MetadataLockDto, PatchMovieDto, PatchSourceItemDto,
-  SearchProviderQueryDto, SourceItemStatusDto, SyncProviderDto,
+  CatalogBatchDto, SearchProviderQueryDto, SourceItemStatusDto, SyncProviderDto,
 } from './catalog.dto';
 
 interface CatalogRequest extends Request { requestId?: string }
@@ -17,7 +18,7 @@ interface CatalogRequest extends Request { requestId?: string }
 @Controller('catalog')
 @UseGuards(CatalogGatewayGuard)
 export class CatalogPublicController {
-  constructor(private readonly catalog: CatalogService) {}
+  constructor(private readonly catalog: CatalogService, private readonly searchProjection: CatalogSearchService) {}
 
   @Get('home')
   async home(@Query('pageSize') pageSize?: string) { return successEnvelope(await this.catalog.home(Number(pageSize) || 20)); }
@@ -30,7 +31,8 @@ export class CatalogPublicController {
   @Get('search')
   async search(@Query() query: CatalogQueryDto, @Req() request: CatalogRequest) {
     if (!query.q?.trim()) return successEnvelope({ items: [], page: query.page, pageSize: query.pageSize, totalItems: 0, totalPages: 0 }, request.requestId ?? 'unknown');
-    return successEnvelope(await this.catalog.listPublic(query, request.header('x-user-id'), request.requestId ?? 'unknown'), request.requestId ?? 'unknown');
+    const isKids = await this.catalog.profileFilter(query.profileId, request.header('x-user-id'), request.requestId ?? 'unknown');
+    return successEnvelope(await this.searchProjection.search(query, isKids), request.requestId ?? 'unknown');
   }
 
   @Get('movies/:movieId')
@@ -146,5 +148,17 @@ export class CatalogStreamingController {
   @Post('owned-source-items/:sourceItemId/ready')
   async ownedReady(@Param('sourceItemId', new ParseUUIDPipe()) sourceItemId: string, @Req() request: CatalogRequest) {
     return successEnvelope(await this.catalog.markOwnedReady(sourceItemId, request.requestId ?? 'unknown'), request.requestId ?? 'unknown');
+  }
+}
+
+@Controller('internal/catalog')
+@UseGuards(CatalogProfileGuard)
+export class CatalogProfileController {
+  constructor(private readonly catalog: CatalogService) {}
+
+  @Post('movies/batch')
+  @HttpCode(HttpStatus.OK)
+  async batch(@Body() body: CatalogBatchDto) {
+    return successEnvelope(await this.catalog.batchMovies(body.movieIds, body.isKids === true, body.includeTombstones === true));
   }
 }

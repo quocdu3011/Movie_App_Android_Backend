@@ -11,11 +11,12 @@ import { ProfileProxyController } from './profiles/profile-proxy.controller';
 import { CatalogAdminProxyController, CatalogPublicProxyController } from './catalog/catalog-proxy.controller';
 import { PaymentWebhookProxyController, SubscriptionProxyController } from './payments/payment-proxy.controller';
 import { StreamingAdminProxyController, StreamingProxyController } from './streaming/streaming-proxy.controller';
+import { HomeController } from './home/home.controller';
 
 const config = loadGatewayConfig();
 
 @Module({
-  controllers: [AuthProxyController, SessionController, AdminSessionController, GatewayHealthController, ProfileProxyController, CatalogPublicProxyController, CatalogAdminProxyController, SubscriptionProxyController, PaymentWebhookProxyController, StreamingProxyController, StreamingAdminProxyController],
+  controllers: [AuthProxyController, SessionController, AdminSessionController, GatewayHealthController, ProfileProxyController, CatalogPublicProxyController, CatalogAdminProxyController, SubscriptionProxyController, PaymentWebhookProxyController, StreamingProxyController, StreamingAdminProxyController, HomeController],
   providers: [
     { provide: GATEWAY_CONFIG, useValue: config },
     JwksClient,

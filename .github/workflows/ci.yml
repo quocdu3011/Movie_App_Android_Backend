@@ -34,6 +34,7 @@ jobs:
           cp .env.example .env
           npm run infra:up
           npm run infra:bootstrap
+          npm run infra:media
           npm run smoke:auth-ci
           npm run smoke:profile-ci
           npm run smoke:catalog-ci
@@ -45,6 +46,7 @@ jobs:
           sudo apt-get install --yes ffmpeg
           npm run infra:media
           npm run smoke:owned-media-ci
+          npm run smoke:g7-ci
           node scripts/infra-persistence.mjs mark
           sleep 2
           docker compose --profile core restart postgres redis kafka
