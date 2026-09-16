@@ -159,14 +159,20 @@ const provider = createServer((req, res) => {
   const playbackUrl = unsafeHost
     ? `https://evil.fixture.invalid/hls/master.m3u8?version=${generatedUrl}`
     : `https://media.fixture.invalid:${mediaPort}/hls/master.m3u8?version=${generatedUrl}`;
-  const episode = { name: 'Full', slug: `full-${slug}`, filename: `full-${slug}` };
-  if (source.mode === 'external_embed') episode.link_embed = 'https://player.fixture.invalid/embed/123';
-  else episode.link_m3u8 = playbackUrl;
+  const episodeCount = source.episodeCount ?? 1;
+  const episodes = Array.from({ length: episodeCount }, (_unused, index) => {
+    const number = index + 1;
+    const suffix = episodeCount === 1 ? '' : `-${number}`;
+    const episode = { name: episodeCount === 1 ? 'Full' : `Tập ${number}`, slug: `full-${slug}${suffix}`, filename: `full-${slug}${suffix}` };
+    if (source.mode === 'external_embed') episode.link_embed = 'https://player.fixture.invalid/embed/123';
+    else episode.link_m3u8 = playbackUrl;
+    return episode;
+  });
   res.end(JSON.stringify({
     status: true, movie: { _id: `provider-${slug}`, slug, name: `Fixture ${slug}`, type: 'single' },
     episodes: [
       { server_name: 'Dub', server_data: [{ name: 'Full', slug: `wrong-${slug}`, filename: `wrong-${slug}`, link_m3u8: `https://evil.fixture.invalid/hls/wrong.m3u8?version=${generatedUrl}` }] },
-      { server_name: 'Vietsub', server_data: [episode] },
+      { server_name: 'Vietsub', server_data: episodes },
     ],
   }));
 });
@@ -191,7 +197,7 @@ const redis = new Redis(process.env.REDIS_URL, { maxRetriesPerRequest: 1 });
 const tokens = {
   auth: { 'api-gateway': gatewayToken, 'streaming-service': authStreamingToken },
   profile: { 'api-gateway': gatewayToken, 'streaming-service': profileStreamingToken, 'catalog-service': profileCatalogToken },
-  catalog: { 'api-gateway': gatewayToken, 'streaming-service': catalogStreamingToken },
+  catalog: { 'api-gateway': gatewayToken, 'streaming-service': catalogStreamingToken, 'profile-service': profileCatalogToken },
   payment: { 'api-gateway': gatewayToken, 'streaming-service': paymentStreamingToken },
   streamingInbound: { 'api-gateway': gatewayToken, 'profile-service': incomingProfileToken, 'transcode-worker': workerStreamingToken },
   streamingDownstream: {
@@ -207,17 +213,18 @@ const sharedEnv = {
   AUTH_JWT_AUDIENCE: process.env.AUTH_JWT_AUDIENCE ?? 'movieapp-api', AUTH_JWT_KID: `g5-${suffix}`,
   AUTH_PRIVATE_KEY_PATH: privateKeyPath, AUTH_PUBLIC_KEY_PATH: publicKeyPath,
   AUTH_INTERNAL_TOKENS_JSON: JSON.stringify(tokens.auth), GATEWAY_SERVICE_TOKEN: gatewayToken,
-  PROFILE_INTERNAL_TOKENS_JSON: JSON.stringify(tokens.profile),
+  PROFILE_INTERNAL_TOKENS_JSON: JSON.stringify(tokens.profile), PROFILE_CATALOG_TOKEN: profileCatalogToken, PROFILE_STREAMING_TOKEN: incomingProfileToken,
   CATALOG_INTERNAL_TOKENS_JSON: JSON.stringify(tokens.catalog),
   PAYMENT_INTERNAL_TOKENS_JSON: JSON.stringify(tokens.payment),
   PAYMENT_MOCK_ENABLED: 'true', PAYMENT_MOCK_HMAC_SECRET: `g5-hmac-${randomUUID()}-${randomUUID()}`,
   PAYMENT_MAINTENANCE_POLL_MS: '250', PAYMENT_FREE_MAX_CONCURRENT_STREAMS: '1', PAYMENT_FREE_MAX_RESOLUTION: '720p',
   STREAMING_INTERNAL_TOKENS_JSON: JSON.stringify(tokens.streamingInbound),
   STREAMING_DOWNSTREAM_TOKENS_JSON: JSON.stringify(tokens.streamingDownstream),
-  STREAMING_SESSION_TTL_SECONDS: '5', STREAMING_MAINTENANCE_POLL_MS: '250', STREAMING_OUTBOX_POLL_MS: '250',
+  STREAMING_SESSION_TTL_SECONDS: '5', STREAMING_CONCURRENT_LIMIT_ENABLED: process.env.STREAMING_CONCURRENT_LIMIT_ENABLED ?? 'true',
+  STREAMING_MAINTENANCE_POLL_MS: '250', STREAMING_OUTBOX_POLL_MS: '250',
   STREAMING_SOURCE_RETRY_BASE_MS: '500', STREAMING_PROVIDER_TIMEOUT_MS: '1500', STREAMING_MAX_PROVIDER_RESOLVES: '10',
   MEDIA_AUTH_SECRET: `g5-media-${randomUUID()}-${randomUUID()}`,
-  STREAMING_TEST_MEDIA_PORT: String(mediaPort), KKPHIM_MEDIA_HOST_ALLOWLIST: 'media.fixture.invalid',
+  STREAMING_TEST_MEDIA_PORT: String(mediaPort), KKPHIM_MEDIA_HOST_ALLOWLIST: '*',
   REDIS_URL: process.env.REDIS_URL, KAFKA_BROKERS: process.env.KAFKA_BROKERS,
   PROFILE_KAFKA_BROKERS: process.env.KAFKA_BROKERS, STREAMING_KAFKA_BROKERS: process.env.KAFKA_BROKERS,
   AUTH_SERVICE_URL: urls.auth, PROFILE_SERVICE_URL: urls.profile, CATALOG_SERVICE_URL: urls.catalog,
@@ -246,6 +253,28 @@ async function makeMovie({ slugPrefix = 'ok', accessTier = 'free', kidsSafe = fa
   const row = { movieId, playableId, sourceId, sourceItemId, slug, mode };
   movieRows.push(row);
   return row;
+}
+
+async function makeSeries(episodeCount = 10) {
+  const slug = `series-${suffix}-${++movieCounter}`;
+  const movieId = randomUUID(); const sourceId = randomUUID(); const seasonId = randomUUID();
+  await catalogPool.query(`INSERT INTO movies(id,title,type,content_kind,status,access_tier,is_kids_safe,average_rating,published_at)
+    VALUES($1,$2,'series','film','published','free',false,0,now())`, [movieId, `G5 Series ${slug}`]);
+  await catalogPool.query(`INSERT INTO seasons(id,movie_id,season_number) VALUES($1,$2,1)`, [seasonId, movieId]);
+  await catalogPool.query(`INSERT INTO content_sources(id,movie_id,source_type,provider,external_id,external_slug,source_status)
+    VALUES($1,$2,'third_party','kkphim',$3,$4,'available')`, [sourceId, movieId, `ext-${slug}`, slug]);
+  const episodes = [];
+  for (let episodeNumber = 1; episodeNumber <= episodeCount; episodeNumber += 1) {
+    const playableId = randomUUID(); const sourceItemId = randomUUID();
+    await catalogPool.query(`INSERT INTO playable_items(id,movie_id,kind,season_id,episode_number,label,sort_order,duration_seconds)
+      VALUES($1,$2,'episode',$3,$4,$5,$4,1200)`, [playableId, movieId, seasonId, episodeNumber, `Tập ${episodeNumber}`]);
+    await catalogPool.query(`INSERT INTO source_items(id,movie_id,source_id,playable_id,server_key,server_label,external_episode_key,external_episode_slug,playback_mode,source_status)
+      VALUES($1,$2,$3,$4,'vietsub','Vietsub',$5,$6,'external_hls','available')`, [sourceItemId, movieId, sourceId, playableId, `full-${slug}-${episodeNumber}`, `full-${slug}-${episodeNumber}`]);
+    const episode = { movieId, playableId, sourceId, sourceItemId, slug, mode: 'external_hls', episodeNumber, episodeCount };
+    movieRows.push(episode);
+    episodes.push(episode);
+  }
+  return episodes;
 }
 
 async function makeOwnedMovie() {
@@ -326,6 +355,7 @@ try {
     execFileSync('npm', ['run', script], { cwd: root, env: { ...process.env, ...sharedEnv }, stdio: 'pipe' });
   }
   const free = await makeMovie();
+  const series = await makeSeries();
   const subscription = await makeMovie({ slugPrefix: 'sub', accessTier: 'subscription' });
   const kidsUnsafe = await makeMovie({ slugPrefix: 'kids', kidsSafe: false });
   const archived = await makeMovie({ slugPrefix: 'archived', status: 'archived' });
@@ -399,7 +429,12 @@ try {
   const otherDeviceHeartbeat = await request(gatewayUrl, `/streaming/playback-sessions/${first.body.data.sessionId}/heartbeat`, { method: 'POST', token: secondOwnerLogin.body.data.accessToken });
   assert.equal(otherDeviceHeartbeat.status, 404, 'a different Auth session cannot reuse the playback session');
   const quota = await createPlayback(ownerProfile, free, `g5-quota-${randomUUID()}`);
-  assert.equal(quota.status, 409, 'free tier concurrent playback limit is enforced');
+  if (sharedEnv.STREAMING_CONCURRENT_LIMIT_ENABLED === 'false') {
+    assert.equal(quota.status, 201, 'concurrent playback limit can be temporarily disabled');
+    await playbackEvent(ownerProfile, quota.body.data.sessionId, 'stopped');
+  } else {
+    assert.equal(quota.status, 409, 'free tier concurrent playback limit is enforced by default');
+  }
   const heartbeat = await request(gatewayUrl, `/streaming/playback-sessions/${first.body.data.sessionId}/heartbeat`, { method: 'POST', token: owner.accessToken });
   assert.equal(heartbeat.status, 200, JSON.stringify(heartbeat.body));
   const started = await playbackEvent(ownerProfile, first.body.data.sessionId, 'started');
@@ -447,6 +482,35 @@ try {
     console.log(`G9_METRIC progress_write_p95_ms=${p95(durations).toFixed(2)} requests=${durations.length} concurrency=10`);
   }
   await playbackEvent(ownerProfile, third.body.data.sessionId, 'stopped');
+
+  const watchEpisode = async (episode, positionSeconds) => {
+    const playback = await createPlayback(ownerProfile, episode);
+    assert.equal(playback.status, 201, JSON.stringify(playback.body));
+    const progress = await request(gatewayUrl, `/streaming/playback-sessions/${playback.body.data.sessionId}/progress`, {
+      method: 'POST', token: owner.accessToken, body: { seq: '1', positionSeconds, durationSeconds: 1200 },
+    });
+    assert.equal(progress.status, 200, JSON.stringify(progress.body));
+    await playbackEvent(ownerProfile, playback.body.data.sessionId, 'stopped');
+    await delay(2);
+  };
+  const historyForOwner = async () => {
+    const response = await request(gatewayUrl, `/profiles/${ownerProfile.id}/watch-history`, { token: owner.accessToken });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    return response.body.data.items.filter((item) => item.movieId === series[0].movieId);
+  };
+
+  await watchEpisode(series[0], 20);
+  assert.equal((await historyForOwner()).length, 0, 'episode 1 below 2% is not continue-watching content');
+  await watchEpisode(series[1], 1);
+  assert.equal((await historyForOwner())[0].playableId, series[1].playableId, 'the 2% threshold applies only to episode 1 or single-playable movies');
+  await watchEpisode(series[0], 30);
+  assert.equal((await historyForOwner())[0].playableId, series[0].playableId, 'episode 1 appears after progress exceeds 2%');
+  await watchEpisode(series[9], 630);
+  assert.equal((await historyForOwner())[0].playableId, series[9].playableId, 'a later episode replaces the prior episode for the same movie');
+  await watchEpisode(series[4], 330);
+  assert.equal((await historyForOwner())[0].playableId, series[4].playableId, 'the most recently watched episode remains the movie progress');
+  console.log('PASS G5 watch history: 2% first/single threshold and one latest episode per movie');
+
   console.log('PASS G5 playback: fresh KKPhim URL, actual HLS fixture, session idempotency, slot limit, ownership, heartbeat, rewind/order/resume, qualified outbox');
 
   const mismatch = await createPlayback(ownerProfile, { ...free, movieId: subscription.movieId });
@@ -459,8 +523,10 @@ try {
   assert.equal(archivedDenied.status, 404, 'archived content cannot start a session');
   const embedDenied = await createPlayback(ownerProfile, embed);
   assert.equal(embedDenied.status, 422, 'embed-only source does not return a playback URL');
-  const unsafeDenied = await createPlayback(ownerProfile, unsafeUrl);
-  assert.equal(unsafeDenied.status, 503, 'resolver rejects an HLS URL outside the exact host allowlist');
+  const arbitraryHostPlayback = await createPlayback(ownerProfile, unsafeUrl);
+  assert.equal(arbitraryHostPlayback.status, 201, 'wildcard allowlist accepts an HTTPS HLS URL from any provider hostname');
+  assert.match(arbitraryHostPlayback.body.data.playbackUrl, /^https:\/\/evil\.fixture\.invalid\/hls\/master\.m3u8/);
+  await playbackEvent(ownerProfile, arbitraryHostPlayback.body.data.sessionId, 'stopped');
   const ownedDenied = await createPlayback(ownerProfile, owned);
   assert.equal(ownedDenied.status, 409, 'owned source without uploaded asset returns VIDEO_NOT_READY');
   assert.equal(ownedDenied.body.error.code, 'VIDEO_NOT_READY');
@@ -483,10 +549,12 @@ try {
     createPlayback(otherProfile, raceMovie, `g5-race-a-${randomUUID()}`),
     createPlayback(otherProfile, raceMovie, `g5-race-b-${randomUUID()}`),
   ]);
-  assert.deepEqual(raceResults.map((result) => result.status).sort(), [201, 409], 'concurrent requests cannot exceed the one-slot quota');
-  const raceSuccess = raceResults.find((result) => result.status === 201);
-  await playbackEvent(otherProfile, raceSuccess.body.data.sessionId, 'stopped');
-  console.log('PASS G5 quota race: concurrent reservations return exactly one slot');
+  const expectedRaceStatuses = sharedEnv.STREAMING_CONCURRENT_LIMIT_ENABLED === 'false' ? [201, 201] : [201, 409];
+  assert.deepEqual(raceResults.map((result) => result.status).sort(), expectedRaceStatuses, 'concurrent requests follow the configured playback-slot limit');
+  for (const raceSuccess of raceResults.filter((result) => result.status === 201)) {
+    await playbackEvent(otherProfile, raceSuccess.body.data.sessionId, 'stopped');
+  }
+  console.log('PASS G5 quota race: concurrent reservations follow configured slot limit');
 
   const deletedProfile = await makeProfile(other, { name: 'Delete' });
   const deleteSession = await createPlayback(deletedProfile, free);

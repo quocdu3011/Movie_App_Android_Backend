@@ -81,7 +81,7 @@ export class StreamingProxyController {
 }
 
 @Controller('admin/videos')
-@RequireRoles('admin', 'content_manager')
+@RequireRoles('admin', 'content_manager', 'content_editor')
 export class StreamingAdminProxyController {
   constructor(@Inject(GATEWAY_CONFIG) private readonly config: GatewayConfig) {}
 

@@ -16,6 +16,7 @@ import { S3ObjectStorage } from '@movie/object-storage';
 interface CatalogSelection {
   movieId: string; movieStatus: string; accessTier: 'free' | 'subscription'; isKidsSafe: boolean;
   playableId: string; playableKind: 'movie' | 'episode'; playableLabel: string; durationSeconds: number | null;
+  requiresMinimumProgress: boolean;
   sourceId: string; sourceType: 'owned' | 'third_party'; provider: string | null; externalSlug: string | null;
   sourceItemId: string; serverKey: string; serverLabel: string; externalEpisodeKey: string | null;
   externalEpisodeSlug: string | null; playbackMode: 'owned_hls' | 'external_hls' | 'external_embed' | 'metadata_only';
@@ -32,6 +33,7 @@ interface AuthValidation { active: boolean; userId: string; sessionId: string }
 interface PlaybackSessionRow {
   id: string; ordinal: string; user_id: string; auth_session_id: string; profile_id: string; movie_id: string;
   playable_id: string; source_item_id: string; source_type: 'owned' | 'third_party'; state: string;
+  requires_minimum_progress: boolean;
   last_seq: string; created_at: Date; expires_at: Date; last_seen_at: Date; started_at: Date | null;
   qualified_at: Date | null; closed_at: Date | null;
 }
@@ -106,6 +108,8 @@ export class StreamingService {
     this.validateSelection(selection, input, actor.profile);
     const entitlement = await this.fetchEntitlement(userId, requestId);
     this.requireEntitlement(selection, entitlement);
+    const concurrentStreamLimit = this.config.concurrentStreamLimitEnabled
+      ? entitlement.limits.maxConcurrentStreams : Number.MAX_SAFE_INTEGER;
     const progress = await this.readProgressFromDatabase(input.profileId, input.playableId);
 
     let allocatedSessionId: string | undefined;
@@ -128,7 +132,7 @@ export class StreamingService {
             throw this.domain(409, 'PLAYBACK_SESSION_TERMINAL', 'This idempotency key refers to a closed or expired playback session; use a new key');
           }
           const newExpiry = new Date(Date.now() + this.config.sessionTtlSeconds * 1000);
-          const reserved = await this.reserveLease(userId, existing.id, entitlement.limits.maxConcurrentStreams, newExpiry.getTime());
+          const reserved = await this.reserveLease(userId, existing.id, concurrentStreamLimit, newExpiry.getTime());
           if (!reserved) throw this.domain(409, 'CONCURRENT_STREAM_LIMIT', 'No playback slots are available');
           const refreshed = rows<PlaybackSessionRow>(await manager.query(`
             UPDATE playback_sessions SET expires_at=$2,last_seen_at=now()
@@ -143,13 +147,13 @@ export class StreamingService {
 
         const sessionId = randomUUID();
         const expiresAt = new Date(Date.now() + this.config.sessionTtlSeconds * 1000);
-        const reserved = await this.reserveLease(userId, sessionId, entitlement.limits.maxConcurrentStreams, expiresAt.getTime());
+        const reserved = await this.reserveLease(userId, sessionId, concurrentStreamLimit, expiresAt.getTime());
         if (!reserved) throw this.domain(409, 'CONCURRENT_STREAM_LIMIT', 'No playback slots are available');
         allocatedSessionId = sessionId;
         const created = rows<PlaybackSessionRow>(await manager.query(`
-          INSERT INTO playback_sessions(id,user_id,auth_session_id,profile_id,movie_id,playable_id,source_item_id,source_type,state,expires_at)
-          VALUES($1,$2,$3,$4,$5,$6,$7,$8,'reserved',$9) RETURNING *
-        `, [sessionId, userId, authSessionId, input.profileId, selection.movieId, selection.playableId, selection.sourceItemId, selection.sourceType, expiresAt]))[0];
+          INSERT INTO playback_sessions(id,user_id,auth_session_id,profile_id,movie_id,playable_id,source_item_id,source_type,requires_minimum_progress,state,expires_at)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'reserved',$10) RETURNING *
+        `, [sessionId, userId, authSessionId, input.profileId, selection.movieId, selection.playableId, selection.sourceItemId, selection.sourceType, selection.requiresMinimumProgress, expiresAt]))[0];
         if (!created) throw new Error('Playback session insert did not return a row');
         await manager.query(`INSERT INTO playback_requests(user_id,idempotency_key,request_hash,session_id,expires_at) VALUES($1,$2,$3,$4,now()+interval '24 hours')`, [userId, idempotencyKey, inputHash, sessionId]);
         return { session: created, replay: false, newSession: true };
@@ -244,15 +248,16 @@ export class StreamingService {
       if (seq <= BigInt(locked.last_seq)) return { applied: false, current: await this.readProgressFromManager(manager, locked.profile_id, locked.playable_id) };
       await manager.query(`UPDATE playback_sessions SET last_seq=$2 WHERE id=$1`, [sessionId, input.seq]);
       const written = rows<ProgressRow>(await manager.query(`
-        INSERT INTO watch_progress(profile_id,playable_id,movie_id,source_item_id,session_ordinal,last_seq,position_seconds,duration_seconds,updated_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,now())
+        INSERT INTO watch_progress(profile_id,playable_id,movie_id,source_item_id,session_ordinal,last_seq,position_seconds,duration_seconds,requires_minimum_progress,updated_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,now())
         ON CONFLICT(profile_id,playable_id) DO UPDATE SET
           movie_id=EXCLUDED.movie_id,source_item_id=EXCLUDED.source_item_id,session_ordinal=EXCLUDED.session_ordinal,
-          last_seq=EXCLUDED.last_seq,position_seconds=EXCLUDED.position_seconds,duration_seconds=EXCLUDED.duration_seconds,updated_at=now()
+          last_seq=EXCLUDED.last_seq,position_seconds=EXCLUDED.position_seconds,duration_seconds=EXCLUDED.duration_seconds,
+          requires_minimum_progress=EXCLUDED.requires_minimum_progress,updated_at=now()
         WHERE (watch_progress.session_ordinal,watch_progress.last_seq)<(EXCLUDED.session_ordinal,EXCLUDED.last_seq)
         RETURNING profile_id AS "profileId",playable_id AS "playableId",movie_id AS "movieId",source_item_id AS "sourceItemId",
           session_ordinal::text AS "sessionOrdinal",last_seq::text AS seq,position_seconds AS "positionSeconds",duration_seconds AS "durationSeconds",updated_at AS "updatedAt"
-      `, [locked.profile_id, locked.playable_id, locked.movie_id, locked.source_item_id, locked.ordinal, input.seq, input.positionSeconds, input.durationSeconds ?? null]))[0];
+      `, [locked.profile_id, locked.playable_id, locked.movie_id, locked.source_item_id, locked.ordinal, input.seq, input.positionSeconds, input.durationSeconds ?? null, locked.requires_minimum_progress]))[0];
       return { applied: Boolean(written), current: written ?? await this.readProgressFromManager(manager, locked.profile_id, locked.playable_id) };
     });
     if (result.applied && result.current) {
@@ -416,10 +421,20 @@ export class StreamingService {
       return this.readProgressFromDatabase(profileId, playableId);
     }
     return this.dataSource.query(`
+      WITH latest_per_movie AS (
+        SELECT DISTINCT ON (movie_id)
+          profile_id,playable_id,movie_id,source_item_id,session_ordinal,last_seq,position_seconds,duration_seconds,updated_at
+        FROM watch_progress
+        WHERE profile_id=$1
+          AND (requires_minimum_progress=false OR (
+            duration_seconds IS NOT NULL AND position_seconds::numeric/duration_seconds>0.02
+          ))
+        ORDER BY movie_id,updated_at DESC,session_ordinal DESC,playable_id
+      )
       SELECT profile_id AS "profileId",playable_id AS "playableId",movie_id AS "movieId",source_item_id AS "sourceItemId",
         session_ordinal::text AS "sessionOrdinal",last_seq::text AS seq,position_seconds AS "positionSeconds",
         duration_seconds AS "durationSeconds",updated_at AS "updatedAt"
-      FROM watch_progress WHERE profile_id=$1 ORDER BY updated_at DESC,playable_id LIMIT 100
+      FROM latest_per_movie ORDER BY updated_at DESC,session_ordinal DESC,playable_id LIMIT 100
     `, [profileId]);
   }
 
@@ -488,7 +503,8 @@ export class StreamingService {
 
   private requireEntitlement(selection: CatalogSelection, entitlement: Entitlement): void {
     if (selection.accessTier === 'subscription' && !entitlement.hasSubscription) throw this.domain(403, 'SUBSCRIPTION_REQUIRED', 'An active subscription is required for this content');
-    if (!Number.isSafeInteger(entitlement.limits?.maxConcurrentStreams) || entitlement.limits.maxConcurrentStreams < 1) {
+    if (this.config.concurrentStreamLimitEnabled
+      && (!Number.isSafeInteger(entitlement.limits?.maxConcurrentStreams) || entitlement.limits.maxConcurrentStreams < 1)) {
       throw this.domain(503, 'ENTITLEMENT_INVALID', 'Playback entitlement limits are unavailable');
     }
   }
@@ -555,7 +571,7 @@ export class StreamingService {
     let url: URL;
     try { url = new URL(value); } catch { throw new ProviderResponseError('PROVIDER_UNSAFE_PLAYBACK_URL'); }
     const host = url.hostname.toLowerCase();
-    const allowed = this.config.mediaHostAllowlist.some((pattern) => {
+    const allowed = this.config.mediaHostAllowlist.includes('*') || this.config.mediaHostAllowlist.some((pattern) => {
       if (pattern.startsWith('*.')) return host.endsWith(`.${pattern.slice(2)}`) && host !== pattern.slice(2);
       return host === pattern;
     });
@@ -659,6 +675,44 @@ export class StreamingService {
       FROM watch_progress WHERE profile_id=$1 AND playable_id=$2
     `, [profileId, playableId]))[0];
     return item ?? null;
+  }
+
+  async adminPlaybackSessions(query: { page?: number; pageSize?: number; userId?: string; status?: string; }): Promise<Record<string, unknown>> {
+    const page = Math.max(1, Math.floor(query.page ?? 1)); const pageSize = Math.min(100, Math.max(1, Math.floor(query.pageSize ?? 25)));
+    const values: unknown[] = []; const where: string[] = [];
+    if (query.userId?.trim()) { values.push(query.userId.trim()); where.push(`user_id=$${values.length}`); }
+    const requestedStatus = query.status?.trim().toLowerCase() || 'active';
+    if (requestedStatus === 'active') {
+      where.push(`state IN ('reserved','ready','playing') AND expires_at>now()`);
+    } else if (['reserved', 'ready', 'playing', 'stopped', 'failed', 'expired'].includes(requestedStatus)) {
+      values.push(requestedStatus); where.push(`state=$${values.length}`);
+    } else if (requestedStatus !== 'all') {
+      throw this.domain(400, 'INVALID_PLAYBACK_SESSION_STATUS', 'status must be active, all, reserved, ready, playing, stopped, failed or expired');
+    }
+    const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const count = rows<{ count: number }>(await this.dataSource.query(`SELECT count(*)::int AS count FROM playback_sessions ${clause}`, values))[0]?.count ?? 0;
+    values.push(pageSize, (page - 1) * pageSize);
+    const items = await this.dataSource.query(`SELECT id,user_id AS "userId",auth_session_id AS "authSessionId",profile_id AS "profileId",movie_id AS "movieId",playable_id AS "playableId",source_type AS "sourceType",state,created_at AS "createdAt",started_at AS "startedAt",last_seen_at AS "lastSeenAt",last_seen_at AS "lastActiveAt",expires_at AS "leaseExpiresAt",closed_at AS "closedAt",CASE WHEN state IN ('reserved','ready','playing') AND expires_at>now() THEN 'active' ELSE 'stale' END AS "leaseStatus" FROM playback_sessions ${clause} ORDER BY last_seen_at DESC,id DESC LIMIT $${values.length - 1} OFFSET $${values.length}`, values);
+    return { items, page, pageSize, totalItems: count };
+  }
+
+  async terminatePlaybackSession(sessionId: string, reason: string): Promise<void> {
+    const cleanReason = reason.trim();
+    if (cleanReason.length < 10 || cleanReason.length > 1000) throw this.domain(400, 'INVALID_REASON', 'Reason must be 10 to 1000 characters');
+    const session = await this.dataSource.transaction(async (manager) => {
+      const current = rows<PlaybackSessionRow>(await manager.query(`SELECT * FROM playback_sessions WHERE id=$1 FOR UPDATE`, [sessionId]))[0];
+      if (!current) throw new NotFoundException('Playback session not found');
+      if (['stopped', 'failed', 'expired'].includes(current.state)) return current;
+      await manager.query(`UPDATE playback_sessions SET state='stopped',closed_at=now(),last_seen_at=now() WHERE id=$1`, [sessionId]);
+      await manager.query(`INSERT INTO playback_events(session_id,event_id,event_type,payload_hash,payload) VALUES($1,$2,'stopped',$3,$4::jsonb)`, [sessionId, randomUUID(), jsonHash({ type: 'stopped', playedSeconds: null, reasonCode: 'admin_terminated' }), JSON.stringify({ type: 'stopped', playedSeconds: null, reasonCode: 'admin_terminated', reason: cleanReason })]);
+      return current;
+    });
+    await this.leases.release(session.user_id, sessionId).catch(() => undefined);
+  }
+
+  async adminPlaybackMetrics(): Promise<Record<string, number>> {
+    const count = rows<{ count: number }>(await this.dataSource.query(`SELECT count(*)::int AS count FROM playback_sessions WHERE state IN ('reserved','ready','playing') AND expires_at>now()`))[0]?.count ?? 0;
+    return { activePlaybackSessions: count };
   }
 
   private async failSession(sessionId: string, userId: string): Promise<void> {

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, Headers, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { successEnvelope } from '@movie/shared-dto';
 import { Request, Response } from 'express';
 import { PlaybackEventDto, PlaybackProgressDto, CreatePlaybackSessionDto, InitiateUploadDto, TranscodeCompletedDto, TranscodeFailedDto, TranscodeProcessingDto } from './streaming.dto';
@@ -90,6 +90,37 @@ export class StreamingAdminController {
   async complete(@Param('assetId', new ParseUUIDPipe()) assetId: string, @Req() request: StreamingRequest) {
     return successEnvelope(await this.streaming.completeUpload(assetId, request.userId!, request.requestId ?? 'unknown'), request.requestId ?? 'unknown');
   }
+}
+
+@Controller('admin/playback-sessions')
+@UseGuards(StreamingAdminGuard)
+export class StreamingOperationsAdminController {
+  constructor(private readonly streaming: StreamingService) {}
+
+  @Get()
+  async list(@Query() query: Record<string, string | undefined>, @Req() request: StreamingRequest) {
+    this.adminOnly(request);
+    return successEnvelope(await this.streaming.adminPlaybackSessions({ page: optionalNumber(query.page), pageSize: optionalNumber(query.pageSize), userId: query.userId, status: query.status }), request.requestId ?? 'unknown');
+  }
+
+  @Post(':sessionId/terminate')
+  @HttpCode(HttpStatus.OK)
+  async terminate(@Param('sessionId', new ParseUUIDPipe()) sessionId: string, @Body() body: { reason?: string }, @Req() request: StreamingRequest) {
+    this.adminOnly(request);
+    await this.streaming.terminatePlaybackSession(sessionId, body.reason ?? '');
+    return successEnvelope({ sessionId, terminated: true }, request.requestId ?? 'unknown');
+  }
+
+  @Get('overview/streaming')
+  async metrics(@Req() request: StreamingRequest) { this.adminOnly(request); return successEnvelope(await this.streaming.adminPlaybackMetrics(), request.requestId ?? 'unknown'); }
+
+  private adminOnly(request: StreamingRequest): void {
+    if (request.userRole !== 'admin') throw new ForbiddenException('Administrator role required');
+  }
+}
+
+function optionalNumber(value: string | undefined): number | undefined {
+  return value === undefined || value.trim() === '' ? undefined : Number(value);
 }
 
 @Controller('internal/streaming/assets')

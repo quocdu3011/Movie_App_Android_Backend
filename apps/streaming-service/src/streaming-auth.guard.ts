@@ -45,7 +45,7 @@ export class StreamingAdminGuard implements CanActivate {
     if (!validStreamingToken(token, caller, this.config) || caller !== 'api-gateway') throw new UnauthorizedException('Streaming API Gateway authentication required');
     const role = request.header('x-user-role');
     const userId = request.header('x-user-id');
-    if (!userId || !['admin', 'content_manager'].includes(role ?? '')) throw new ForbiddenException('Content administrator role required');
+    if (!userId || !['admin', 'content_manager', 'content_editor'].includes(role ?? '')) throw new ForbiddenException('Content administrator role required');
     request.userId = userId;
     request.userRole = role;
     return true;

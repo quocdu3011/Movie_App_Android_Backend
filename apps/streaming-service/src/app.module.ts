@@ -6,7 +6,7 @@ import { KkphimAdapter } from '@movie/content-provider';
 import { STREAMING_CONFIG, loadStreamingConfig } from './streaming.config';
 import { CreateStreamingPlaybackSchema1700000000005 } from './database/migrations/1700000000005-CreateStreamingPlaybackSchema';
 import { StreamingAdminGuard, StreamingGatewayGuard, StreamingInternalGuard, StreamingWorkerGuard } from './streaming-auth.guard';
-import { StreamingAdminController, StreamingController, StreamingHealthController, StreamingProfileController, StreamingWorkerController } from './streaming.controller';
+import { StreamingAdminController, StreamingController, StreamingHealthController, StreamingOperationsAdminController, StreamingProfileController, StreamingWorkerController } from './streaming.controller';
 import { CreateOwnedMediaSchema1700000000006 } from './database/migrations/1700000000006-CreateOwnedMediaSchema';
 import { PlaybackLeaseStore } from './playback-lease.store';
 import { SourceCircuit } from './source-circuit';
@@ -23,7 +23,7 @@ const config = loadStreamingConfig();
     migrations: [CreateStreamingPlaybackSchema1700000000005, CreateOwnedMediaSchema1700000000006], migrationsRun: false,
     synchronize: false, retryAttempts: 2, retryDelay: 1_000,
   })],
-  controllers: [StreamingController, StreamingProfileController, StreamingHealthController, StreamingAdminController, StreamingWorkerController],
+  controllers: [StreamingController, StreamingProfileController, StreamingHealthController, StreamingAdminController, StreamingOperationsAdminController, StreamingWorkerController],
   providers: [
     { provide: STREAMING_CONFIG, useValue: config },
     {

@@ -21,6 +21,7 @@ export interface StreamingConfig {
   testMediaPort: number | null;
   providerTimeoutMs: number;
   sessionTtlSeconds: number;
+  concurrentStreamLimitEnabled: boolean;
   maintenancePollMs: number;
   outboxPollMs: number;
   sourceRetryBaseMs: number;
@@ -43,6 +44,12 @@ function integer(env: NodeJS.ProcessEnv, key: string, fallback: number, min: num
   const value = env[key] === undefined ? fallback : Number(env[key]);
   if (!Number.isSafeInteger(value) || value < min || value > max) throw new Error(`${key} must be an integer from ${min} to ${max}`);
   return value;
+}
+
+function boolean(env: NodeJS.ProcessEnv, key: string, fallback: boolean): boolean {
+  const value = (env[key] ?? String(fallback)).trim().toLowerCase();
+  if (value !== 'true' && value !== 'false') throw new Error(`${key} must be true or false`);
+  return value === 'true';
 }
 
 function origin(raw: string | undefined, key: string, fallback: string): string {
@@ -108,8 +115,8 @@ export function loadStreamingConfig(env: NodeJS.ProcessEnv = process.env): Strea
   if (!['redis:', 'rediss:'].includes(redis.protocol) || !redis.hostname || redis.username) throw new Error('REDIS_URL must use redis(s) and may include a password, but not a username');
 
   const rawHosts = env.KKPHIM_MEDIA_HOST_ALLOWLIST?.split(',').map((item) => item.trim().toLowerCase()).filter(Boolean) ?? [];
-  if (rawHosts.length === 0 || rawHosts.some((host) => !/^(?:\*\.)?(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(host))) {
-    throw new Error('KKPHIM_MEDIA_HOST_ALLOWLIST must contain exact DNS hosts or *.domain suffixes');
+  if (rawHosts.length === 0 || rawHosts.some((host) => host !== '*' && !/^(?:\*\.)?(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(host))) {
+    throw new Error('KKPHIM_MEDIA_HOST_ALLOWLIST must contain *, exact DNS hosts or *.domain suffixes');
   }
   const testMediaPort = service.nodeEnv === 'test' && env.STREAMING_TEST_MEDIA_PORT !== undefined
     ? integer(env, 'STREAMING_TEST_MEDIA_PORT', 443, 1, 65_535) : null;
@@ -140,6 +147,7 @@ export function loadStreamingConfig(env: NodeJS.ProcessEnv = process.env): Strea
     testMediaPort,
     providerTimeoutMs: integer(env, 'STREAMING_PROVIDER_TIMEOUT_MS', 4_000, 500, 5_000),
     sessionTtlSeconds: integer(env, 'STREAMING_SESSION_TTL_SECONDS', 90, 1, 900),
+    concurrentStreamLimitEnabled: boolean(env, 'STREAMING_CONCURRENT_LIMIT_ENABLED', true),
     maintenancePollMs: integer(env, 'STREAMING_MAINTENANCE_POLL_MS', 1_000, 250, 60_000),
     outboxPollMs: integer(env, 'STREAMING_OUTBOX_POLL_MS', 1_000, 250, 60_000),
     sourceRetryBaseMs: integer(env, 'STREAMING_SOURCE_RETRY_BASE_MS', 1_000, 100, 60_000),
