@@ -69,30 +69,6 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-  opensearch:
-    image: opensearchproject/opensearch:2.19.1
-    profiles: [media]
-    environment:
-      discovery.type: single-node
-      DISABLE_SECURITY_PLUGIN: "true"
-      DISABLE_INSTALL_DEMO_CONFIG: "true"
-      bootstrap.memory_lock: "true"
-      OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
-    ulimits:
-      memlock: { soft: -1, hard: -1 }
-      nofile: { soft: 65536, hard: 65536 }
-    ports:
-      - "127.0.0.1:${OPENSEARCH_PORT:-9200}:9200"
-    volumes:
-      - opensearch-data:/usr/share/opensearch/data
-    healthcheck:
-      test: [CMD-SHELL, 'curl -fsS "http://localhost:9200/_cluster/health?wait_for_status=yellow" >/dev/null']
-      interval: 15s
-      timeout: 10s
-      retries: 20
-      start_period: 45s
-    restart: unless-stopped
-
   minio:
     build:
       context: .
@@ -221,7 +197,6 @@ volumes:
   postgres-data:
   redis-data:
   kafka-data:
-  opensearch-data:
   minio-data:
   prometheus-data:
   grafana-data:
