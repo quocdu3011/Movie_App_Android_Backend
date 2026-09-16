@@ -59,6 +59,14 @@ export class ProfileService {
     return profiles.map((profile) => this.toView(profile));
   }
 
+  async adminList(userId: string): Promise<ProfileView[]> {
+    const profiles = await this.dataSource.getRepository(Profile).find({
+      where: { userId, deletedAt: IsNull() },
+      order: { createdAt: 'ASC' },
+    });
+    return profiles.map((profile) => this.toView(profile));
+  }
+
   async create(userId: string, input: CreateProfileDto): Promise<ProfileView> {
     const name = input.name.trim();
     if (name.length === 0) throw new BadRequestException('Profile name must not be empty');

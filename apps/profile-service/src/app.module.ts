@@ -5,8 +5,8 @@ import { PROFILE_CONFIG, loadProfileConfig } from './profile.config';
 import { OutboxEvent } from './profiles/outbox-event.entity';
 import { ProfileQuota } from './profiles/profile-quota.entity';
 import { Profile } from './profiles/profile.entity';
-import { InternalProfileController, ProfileController, ProfileHealthController } from './profiles/profile.controller';
-import { ProfileGatewayGuard, ProfileInternalGuard } from './profiles/profile-auth.guard';
+import { AdminProfileController, InternalProfileController, ProfileController, ProfileHealthController } from './profiles/profile.controller';
+import { ProfileAdminGuard, ProfileGatewayGuard, ProfileInternalGuard } from './profiles/profile-auth.guard';
 import { ProfileService } from './profiles/profile.service';
 import { OutboxPublisherService } from './profiles/outbox-publisher.service';
 
@@ -24,12 +24,13 @@ const config = loadProfileConfig();
     }),
     TypeOrmModule.forFeature([Profile, ProfileQuota, OutboxEvent]),
   ],
-  controllers: [ProfileController, InternalProfileController, ProfileHealthController],
+  controllers: [ProfileController, InternalProfileController, AdminProfileController, ProfileHealthController],
   providers: [
     { provide: PROFILE_CONFIG, useValue: config },
     ProfileService,
     ProfileGatewayGuard,
     ProfileInternalGuard,
+    ProfileAdminGuard,
     OutboxPublisherService,
   ],
 })

@@ -12,7 +12,7 @@ export interface ValidatedSession {
   active: boolean;
   userId: string;
   sessionId: string;
-  role?: 'user' | 'admin' | 'content_manager';
+  role?: 'user' | 'admin' | 'content_manager' | 'content_editor' | 'support';
   email?: string;
   fullName?: string;
 }

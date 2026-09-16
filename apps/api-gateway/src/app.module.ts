@@ -12,15 +12,18 @@ import { CatalogAdminProxyController, CatalogPublicProxyController } from './cat
 import { PaymentWebhookProxyController, SubscriptionProxyController } from './payments/payment-proxy.controller';
 import { StreamingAdminProxyController, StreamingProxyController } from './streaming/streaming-proxy.controller';
 import { HomeController } from './home/home.controller';
+import { AdminOperationsController } from './admin/admin-operations.controller';
+import { AdminUserSearchRateLimitGuard } from './admin/admin-user-search-rate-limit.guard';
 
 const config = loadGatewayConfig();
 
 @Module({
-  controllers: [AuthProxyController, SessionController, AdminSessionController, GatewayHealthController, ProfileProxyController, CatalogPublicProxyController, CatalogAdminProxyController, SubscriptionProxyController, PaymentWebhookProxyController, StreamingProxyController, StreamingAdminProxyController, HomeController],
+  controllers: [AuthProxyController, SessionController, AdminSessionController, GatewayHealthController, ProfileProxyController, CatalogPublicProxyController, CatalogAdminProxyController, SubscriptionProxyController, PaymentWebhookProxyController, StreamingProxyController, StreamingAdminProxyController, HomeController, AdminOperationsController],
   providers: [
     { provide: GATEWAY_CONFIG, useValue: config },
     JwksClient,
     AuthRateLimitGuard,
+    AdminUserSearchRateLimitGuard,
     { provide: APP_GUARD, useClass: AccessAuthGuard },
     { provide: APP_GUARD, useClass: RoleGuard },
   ],

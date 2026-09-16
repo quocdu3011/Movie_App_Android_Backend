@@ -119,7 +119,7 @@ export class GatewayHealthController {
 @Controller('admin')
 export class AdminSessionController {
   @Get('session')
-  @RequireRoles('admin', 'content_manager')
+  @RequireRoles('admin', 'content_manager', 'content_editor', 'support')
   current(@Req() request: AuthenticatedRequest) {
     return successEnvelope(request.authSession, request.requestId ?? 'unknown');
   }

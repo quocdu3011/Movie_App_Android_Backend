@@ -1,7 +1,7 @@
-import { Body, Controller, Get, Headers, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Req, UnauthorizedException, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, ForbiddenException, Get, Headers, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Query, Req, UnauthorizedException, UseGuards } from '@nestjs/common';
 import { Request } from 'express';
 import { successEnvelope } from '@movie/shared-dto';
-import { PaymentGatewayGuard, PaymentInternalGuard } from './payment-auth.guard';
+import { PaymentAdminGuard, PaymentGatewayGuard, PaymentInternalGuard } from './payment-auth.guard';
 import { PaymentService } from './payment.service';
 import { SubscribeDto } from './payment.dto';
 
@@ -9,6 +9,8 @@ interface PaymentRequest extends Request {
   requestId?: string;
   userId?: string;
   rawBody?: Buffer;
+  adminRole?: 'admin' | 'support';
+  adminActorId?: string;
 }
 
 @Controller('subscriptions')
@@ -57,6 +59,31 @@ export class PaymentInternalController {
   async entitlement(@Param('userId', new ParseUUIDPipe()) userId: string, @Req() request: PaymentRequest) {
     return successEnvelope(await this.payment.entitlement(userId), request.requestId ?? 'unknown');
   }
+}
+
+@Controller('admin')
+@UseGuards(PaymentAdminGuard)
+export class PaymentAdminController {
+  constructor(private readonly payment: PaymentService) {}
+  @Get('plans') async plans(@Req() request: PaymentRequest) { this.adminOnly(request); return successEnvelope(await this.payment.adminPlans(), request.requestId ?? 'unknown'); }
+  @Post('plans') @HttpCode(HttpStatus.CREATED) async create(@Body() body: Record<string, unknown>, @Req() request: PaymentRequest) { this.adminOnly(request); this.requireReason(body.reason); return successEnvelope(await this.payment.createPlan(body), request.requestId ?? 'unknown'); }
+  @Patch('plans/:planId') async patch(@Param('planId') planId: string, @Body() body: Record<string, unknown>, @Req() request: PaymentRequest) { this.adminOnly(request); this.requireReason(body.reason); return successEnvelope(await this.payment.patchPlan(planId, body), request.requestId ?? 'unknown'); }
+  @Get('transactions') async transactions(@Query() query: Record<string, string | undefined>, @Req() request: PaymentRequest) { return successEnvelope(await this.payment.adminTransactions({ page: optionalNumber(query.page), pageSize: optionalNumber(query.pageSize), status: query.status, from: query.from, to: query.to }), request.requestId ?? 'unknown'); }
+  @Get('users/:userId/subscriptions') async subscriptions(@Param('userId', new ParseUUIDPipe()) userId: string, @Req() request: PaymentRequest) { return successEnvelope(await this.payment.adminSubscriptions(userId), request.requestId ?? 'unknown'); }
+  @Post('users/:userId/subscriptions/extend') @HttpCode(HttpStatus.OK) async extend(@Param('userId', new ParseUUIDPipe()) userId: string, @Body() body: { days?: number; reason?: string }, @Req() request: PaymentRequest) { this.adminOnly(request); if (!body.reason?.trim() || body.reason.trim().length < 10) throw new BadRequestException('Reason must be at least 10 characters'); return successEnvelope(await this.payment.extendSubscription(userId, Number(body.days)), request.requestId ?? 'unknown'); }
+  @Get('overview/payment') async metrics(@Req() request: PaymentRequest) { return successEnvelope(await this.payment.adminMetrics(), request.requestId ?? 'unknown'); }
+
+  private adminOnly(request: PaymentRequest): void {
+    if (request.adminRole !== 'admin') throw new ForbiddenException('Administrator role required');
+  }
+
+  private requireReason(value: unknown): void {
+    if (typeof value !== 'string' || value.trim().length < 10 || value.trim().length > 1000) throw new BadRequestException('Reason must be 10 to 1000 characters');
+  }
+}
+
+function optionalNumber(value: string | undefined): number | undefined {
+  return value === undefined || value.trim() === '' ? undefined : Number(value);
 }
 
 @Controller()

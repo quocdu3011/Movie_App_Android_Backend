@@ -52,3 +52,15 @@ export class ProfileInternalGuard implements CanActivate {
     return true;
   }
 }
+
+@Injectable()
+export class ProfileAdminGuard implements CanActivate {
+  constructor(@Inject(PROFILE_CONFIG) private readonly config: ProfileConfig) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    const request = context.switchToHttp().getRequest<ProfileRequest>();
+    if (authenticate(request, this.config) !== 'api-gateway') throw new ForbiddenException('Profile administrator routes are only available through the API Gateway');
+    if (!['admin', 'support'].includes(request.header('x-user-role') ?? '')) throw new ForbiddenException('Profile administrator role required');
+    return true;
+  }
+}

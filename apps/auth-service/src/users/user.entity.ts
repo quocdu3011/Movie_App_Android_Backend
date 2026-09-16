@@ -1,6 +1,6 @@
 import { Column, CreateDateColumn, Entity, PrimaryColumn, UpdateDateColumn } from 'typeorm';
 
-export type UserRole = 'user' | 'admin' | 'content_manager';
+export type UserRole = 'user' | 'admin' | 'content_manager' | 'content_editor' | 'support';
 export type UserStatus = 'active' | 'banned' | 'deleted';
 
 @Entity({ name: 'users' })

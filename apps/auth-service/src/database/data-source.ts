@@ -4,6 +4,7 @@ import { AuthSession } from '../sessions/auth-session.entity';
 import { RefreshToken } from '../sessions/refresh-token.entity';
 import { User } from '../users/user.entity';
 import { CreateAuthSchema1700000000000 } from './migrations/1700000000000-CreateAuthSchema';
+import { AddAdminOperations1700000000009 } from './migrations/1700000000009-AddAdminOperations';
 
 const databaseUrl = process.env.AUTH_DATABASE_URL;
 if (!databaseUrl) throw new Error('AUTH_DATABASE_URL is required');
@@ -12,7 +13,7 @@ export default new DataSource({
   type: 'postgres',
   url: databaseUrl,
   entities: [User, AuthSession, RefreshToken],
-  migrations: [CreateAuthSchema1700000000000],
+  migrations: [CreateAuthSchema1700000000000, AddAdminOperations1700000000009],
   migrationsTableName: 'typeorm_migrations',
   synchronize: false,
 });

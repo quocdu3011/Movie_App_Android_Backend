@@ -6,7 +6,7 @@ import { Request } from 'express';
 import { successEnvelope } from '@movie/shared-dto';
 import { ProfileService } from './profile.service';
 import { CreateProfileDto, UpdateProfileDto, ValidateProfileDto } from './profile.dto';
-import { ProfileGatewayGuard, ProfileInternalGuard } from './profile-auth.guard';
+import { ProfileAdminGuard, ProfileGatewayGuard, ProfileInternalGuard } from './profile-auth.guard';
 
 interface ProfileRequest extends Request {
   requestId?: string;
@@ -82,6 +82,17 @@ export class InternalProfileController {
       await this.profiles.validate(body.userId, body.profileId),
       request.requestId ?? 'unknown',
     );
+  }
+}
+
+@Controller('admin/users')
+@UseGuards(ProfileAdminGuard)
+export class AdminProfileController {
+  constructor(private readonly profiles: ProfileService) {}
+
+  @Get(':userId/profiles')
+  async list(@Param('userId', new ParseUUIDPipe()) userId: string, @Req() request: ProfileRequest) {
+    return successEnvelope(await this.profiles.adminList(userId), request.requestId ?? 'unknown');
   }
 }
 

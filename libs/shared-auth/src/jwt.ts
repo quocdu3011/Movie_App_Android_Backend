@@ -9,7 +9,7 @@ import {
 export interface AccessTokenClaims {
   sub: string;
   sid: string;
-  role: 'user' | 'admin' | 'content_manager';
+  role: 'user' | 'admin' | 'content_manager' | 'content_editor' | 'support';
   iss: string;
   aud: string | string[];
   iat: number;
@@ -95,7 +95,7 @@ export function verifyAccessToken(
   if (typeof payload.sub !== 'string' || !payload.sub || typeof payload.sid !== 'string' || !payload.sid) {
     throw new Error('JWT subject/session is missing');
   }
-  if (!['user', 'admin', 'content_manager'].includes(String(payload.role))) {
+  if (!['user', 'admin', 'content_manager', 'content_editor', 'support'].includes(String(payload.role))) {
     throw new Error('Invalid JWT role');
   }
 

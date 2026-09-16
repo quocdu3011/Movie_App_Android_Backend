@@ -24,3 +24,29 @@ export class ServiceTokenGuard implements CanActivate {
     return true;
   }
 }
+
+export interface AdminServiceRequest extends Request {
+  serviceName?: string;
+  adminActorId?: string;
+  adminRole?: string;
+  requestId?: string;
+}
+
+@Injectable()
+export class AuthAdminGuard implements CanActivate {
+  constructor(private readonly serviceTokenGuard: ServiceTokenGuard) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    if (!this.serviceTokenGuard.canActivate(context)) return false;
+    const request = context.switchToHttp().getRequest<AdminServiceRequest>();
+    if (request.serviceName !== 'api-gateway') throw new ForbiddenException('Admin routes are only available through the API Gateway');
+    const actorId = request.header('x-user-id');
+    const role = request.header('x-user-role');
+    if (!actorId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(actorId) || !role || !['admin', 'content_manager', 'content_editor', 'support'].includes(role)) {
+      throw new ForbiddenException('Administrator context is required');
+    }
+    request.adminActorId = actorId;
+    request.adminRole = role;
+    return true;
+  }
+}

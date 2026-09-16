@@ -4,7 +4,12 @@ import { parseBearerToken } from '@movie/shared-auth';
 import { Request } from 'express';
 import { PAYMENT_CONFIG, PaymentConfig, validServiceToken } from './payment.config';
 
-interface PaymentRequest extends Request { callerService?: string; userId?: string }
+interface PaymentRequest extends Request {
+  callerService?: string;
+  userId?: string;
+  adminRole?: 'admin' | 'support';
+  adminActorId?: string;
+}
 
 function authenticate(request: PaymentRequest, config: PaymentConfig): string {
   const caller = request.header('x-caller-service') ?? undefined;
@@ -38,6 +43,20 @@ export class PaymentInternalGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest<PaymentRequest>();
     if (authenticate(request, this.config) !== 'streaming-service') throw new ForbiddenException('Payment entitlement is only available to Streaming');
+    return true;
+  }
+}
+
+@Injectable()
+export class PaymentAdminGuard implements CanActivate {
+  constructor(@Inject(PAYMENT_CONFIG) private readonly config: PaymentConfig) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    const request = context.switchToHttp().getRequest<PaymentRequest>();
+    if (authenticate(request, this.config) !== 'api-gateway') throw new ForbiddenException('Payment admin routes are only available through the API Gateway');
+    const role = request.header('x-user-role'); const actorId = request.header('x-user-id');
+    if (!actorId || !['admin', 'support'].includes(role ?? '')) throw new ForbiddenException('Payment administrator role required');
+    request.adminRole = role as 'admin' | 'support'; request.adminActorId = actorId;
     return true;
   }
 }

@@ -71,6 +71,61 @@ export class PaymentService {
     return rows.map(publicPlan);
   }
 
+  async adminPlans() {
+    const rows = await this.dataSource.query(`SELECT id,name,price::text AS price,currency,duration_days AS "durationDays",max_concurrent_streams AS "maxConcurrentStreams",max_resolution AS "maxResolution",active,version::text AS version,created_at AS "createdAt",updated_at AS "updatedAt" FROM plans ORDER BY price,id`);
+    return { items: rows };
+  }
+
+  async createPlan(input: Record<string, unknown>) {
+    const id = normalizedText(input.id, 80) ?? `plan-${randomUUID()}`; const name = normalizedText(input.name, 160); const currency = normalizedText(input.currency, 3)?.toUpperCase() ?? 'VND';
+    const price = cents(input.price); const durationDays = Number(input.durationDays); const streams = Number(input.maxConcurrentStreams); const resolution = normalizedText(input.maxResolution, 20);
+    if (!name || price === null || price < 0n || !/^[A-Z]{3}$/.test(currency) || !Number.isSafeInteger(durationDays) || durationDays < 1 || !Number.isSafeInteger(streams) || streams < 1 || !resolution) throw new BadRequestException('Plan input is invalid');
+    try {
+      const rows = await this.dataSource.query(`INSERT INTO plans(id,name,price,currency,duration_days,max_concurrent_streams,max_resolution,active) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id,name,price::text AS price,currency,duration_days AS "durationDays",max_concurrent_streams AS "maxConcurrentStreams",max_resolution AS "maxResolution",active,version::text AS version`, [id, name, (Number(price) / 100).toFixed(2), currency, durationDays, streams, resolution, input.active !== false]);
+      return rows[0];
+    } catch (error) { if (this.isUniqueViolation(error)) throw new ConflictException('Plan id already exists'); throw error; }
+  }
+
+  async patchPlan(planId: string, input: Record<string, unknown>) {
+    const allowed: Array<[string, unknown]> = [['name', input.name === undefined ? undefined : normalizedText(input.name, 160)], ['price', input.price === undefined ? undefined : cents(input.price)], ['currency', input.currency === undefined ? undefined : normalizedText(input.currency, 3)?.toUpperCase()], ['duration_days', input.durationDays === undefined ? undefined : Number(input.durationDays)], ['max_concurrent_streams', input.maxConcurrentStreams === undefined ? undefined : Number(input.maxConcurrentStreams)], ['max_resolution', input.maxResolution === undefined ? undefined : normalizedText(input.maxResolution, 20)], ['active', input.active]];
+    const fields: string[] = []; const values: unknown[] = [];
+    for (const [column, value] of allowed) {
+      if (value === undefined) continue;
+      if (value === null || value === '' || (typeof value === 'number' && (!Number.isSafeInteger(value) || value < 0)) || (column === 'currency' && (typeof value !== 'string' || !/^[A-Z]{3}$/.test(value))) || (['duration_days', 'max_concurrent_streams'].includes(column) && (typeof value !== 'number' || value < 1))) throw new BadRequestException('Plan update is invalid');
+      values.push(column === 'price' ? (Number(value as bigint) / 100).toFixed(2) : value); fields.push(`${column}=$${values.length}`);
+    }
+    if (!fields.length) throw new BadRequestException('No plan changes supplied');
+    values.push(planId); const rows = await this.dataSource.query(`UPDATE plans SET ${fields.join(',')},version=version+1,updated_at=now() WHERE id=$${values.length} RETURNING id,name,price::text AS price,currency,duration_days AS "durationDays",max_concurrent_streams AS "maxConcurrentStreams",max_resolution AS "maxResolution",active,version::text AS version`, values);
+    if (!rows[0]) throw new NotFoundException('Plan not found'); return rows[0];
+  }
+
+  async adminTransactions(query: { page?: number; pageSize?: number; status?: string; from?: string; to?: string; }) {
+    const page = Math.max(1, Math.floor(query.page ?? 1)); const pageSize = Math.min(100, Math.max(1, Math.floor(query.pageSize ?? 25))); const values: unknown[] = []; const where: string[] = [];
+    if (query.status?.trim()) { values.push(query.status.trim()); where.push(`p.status=$${values.length}`); }
+    if (query.from?.trim()) { values.push(query.from); where.push(`p.created_at >= $${values.length}::timestamptz`); }
+    if (query.to?.trim()) { values.push(query.to); where.push(`p.created_at <= $${values.length}::timestamptz`); }
+    const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const count = await this.dataSource.query(`SELECT count(*)::int AS count FROM payments p ${clause}`, values) as Array<{ count: number }>;
+    values.push(pageSize, (page - 1) * pageSize);
+    const items = await this.dataSource.query(`SELECT p.id,p.user_id AS "userId",p.subscription_id AS "subscriptionId",p.provider,p.payment_method AS "paymentMethod",p.amount::text AS amount,p.currency,p.status,p.provider_transaction_id AS "providerTransactionId",p.created_at AS "createdAt",p.paid_at AS "paidAt" FROM payments p ${clause} ORDER BY p.created_at DESC,p.id DESC LIMIT $${values.length - 1} OFFSET $${values.length}`, values);
+    return { items, page, pageSize, totalItems: count[0]?.count ?? 0 };
+  }
+
+  async adminSubscriptions(userId: string) {
+    const items = await this.dataSource.query(`SELECT id,plan_id AS "planId",status,start_at AS "startAt",end_at AS "endAt",snapshot_name AS "planName",snapshot_duration_days AS "durationDays",created_at AS "createdAt" FROM subscriptions WHERE user_id=$1 ORDER BY created_at DESC`, [userId]); return { items };
+  }
+
+  async extendSubscription(userId: string, days: number) {
+    if (!Number.isSafeInteger(days) || days < 1 || days > 3650) throw new BadRequestException('Extension days must be 1 to 3650');
+    const rows = await this.dataSource.query(`UPDATE subscriptions SET end_at=end_at+($2 || ' days')::interval,version=version+1,updated_at=now() WHERE user_id=$1 AND status='active' AND end_at>now() RETURNING id,end_at AS "endAt"`, [userId, String(days)]);
+    if (!rows[0]) throw new NotFoundException('Active subscription not found'); return rows[0];
+  }
+
+  async adminMetrics() {
+    const rows = await this.dataSource.query(`SELECT count(*) FILTER (WHERE status='active' AND end_at>now())::int AS active, count(*) FILTER (WHERE status='pending')::int AS pending FROM subscriptions`) as Array<{ active: number; pending: number }>;
+    return { activeSubscriptions: rows[0]?.active ?? 0, pendingSubscriptions: rows[0]?.pending ?? 0 };
+  }
+
   async subscribe(userId: string, idempotencyKey: string, input: SubscribeDto, requestId: string) {
     if (!userId) throw new UnauthorizedException('Authenticated user context is required');
     if (!/^[0-9a-f-]{36}$/i.test(userId)) throw new UnauthorizedException('Authenticated user context is invalid');
@@ -362,6 +417,12 @@ export class PaymentService {
       },
       payment: { paymentId: row.paymentId, status: row.paymentStatus, method: row.paymentMethod, expiresAt: row.paymentExpiresAt, createdAt: row.createdAt },
     };
+  }
+
+  private isUniqueViolation(error: unknown): boolean {
+    if (!error || typeof error !== 'object') return false;
+    const candidate = error as { code?: unknown; driverError?: { code?: unknown } };
+    return candidate.code === '23505' || candidate.driverError?.code === '23505';
   }
 
   private async writeEvent<TPayload>(

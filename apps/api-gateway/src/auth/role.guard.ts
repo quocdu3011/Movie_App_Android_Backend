@@ -4,7 +4,7 @@ import { SetMetadata } from '@nestjs/common';
 import { AuthenticatedRequest } from './access-auth.guard';
 
 export const REQUIRED_ROLES = 'requiredRoles';
-export const RequireRoles = (...roles: Array<'user' | 'admin' | 'content_manager'>) => SetMetadata(REQUIRED_ROLES, roles);
+export const RequireRoles = (...roles: Array<'user' | 'admin' | 'content_manager' | 'content_editor' | 'support'>) => SetMetadata(REQUIRED_ROLES, roles);
 
 @Injectable()
 export class RoleGuard implements CanActivate {
@@ -14,7 +14,7 @@ export class RoleGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const isAdminRoute = /^\/admin(?:\/|$)/.test(request.path);
     if (!isAdminRoute) return true;
-    const required = this.reflector.getAllAndOverride<Array<'user' | 'admin' | 'content_manager'>>(REQUIRED_ROLES, [
+    const required = this.reflector.getAllAndOverride<Array<'user' | 'admin' | 'content_manager' | 'content_editor' | 'support'>>(REQUIRED_ROLES, [
       context.getHandler(), context.getClass(),
     ]) ?? ['admin'];
     if (!request.authSession?.role || !required.includes(request.authSession.role)) {
