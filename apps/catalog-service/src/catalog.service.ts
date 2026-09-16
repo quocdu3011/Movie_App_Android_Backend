@@ -1,5 +1,5 @@
 import {
-  BadRequestException, ConflictException, Inject, Injectable, NotFoundException,
+  BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException,
   ServiceUnavailableException, UnauthorizedException,
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
@@ -63,6 +63,8 @@ function episodeIdentity(server: ProviderServer, episodeIndex: number, label: st
 
 @Injectable()
 export class CatalogService {
+  private readonly logger = new Logger(CatalogService.name);
+
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     @Inject(CATALOG_CONFIG) private readonly config: CatalogConfig,
@@ -75,6 +77,10 @@ export class CatalogService {
     const rows = await this.dataSource.query(`
       SELECT m.id AS "movieId",m.status AS "movieStatus",m.access_tier AS "accessTier",m.is_kids_safe AS "isKidsSafe",
         p.id AS "playableId",p.kind AS "playableKind",p.label AS "playableLabel",p.duration_seconds AS "durationSeconds",
+        CASE WHEN p.episode_number=1 OR (
+          SELECT COUNT(*) FROM playable_items movie_playables
+          WHERE movie_playables.movie_id=m.id AND movie_playables.archived_at IS NULL
+        )=1 THEN true ELSE false END AS "requiresMinimumProgress",
         cs.id AS "sourceId",cs.source_type AS "sourceType",cs.provider,cs.external_slug AS "externalSlug",
         si.id AS "sourceItemId",si.server_key AS "serverKey",si.server_label AS "serverLabel",
         si.external_episode_key AS "externalEpisodeKey",si.external_episode_slug AS "externalEpisodeSlug",
@@ -206,6 +212,16 @@ export class CatalogService {
     return { items: rows.map(publicMovie), page, pageSize, totalItems, totalPages: Math.ceil(totalItems / pageSize) };
   }
 
+  async listGenres(): Promise<{ items: Array<{ slug: string; name: string }> }> {
+    const items = await this.dataSource.query(`SELECT slug,name FROM genres ORDER BY lower(name),slug`) as Array<{ slug: string; name: string }>;
+    return { items };
+  }
+
+  async listCountries(): Promise<{ items: Array<{ slug: string; name: string }> }> {
+    const items = await this.dataSource.query(`SELECT slug,name FROM countries ORDER BY lower(name),slug`) as Array<{ slug: string; name: string }>;
+    return { items };
+  }
+
   async batchMovies(movieIds: string[], isKids: boolean, includeTombstones: boolean): Promise<Array<{ movieId: string; movie: Record<string, unknown> | null; tombstone: boolean }>> {
     const uniqueIds = [...new Set(movieIds)].slice(0, 100);
     if (!uniqueIds.length) return [];
@@ -233,19 +249,121 @@ export class CatalogService {
     return rows.map(publicMovie);
   }
 
-  async home(pageSize = 20) {
-    const limit = Math.min(50, Math.max(1, pageSize));
-    const rows = await this.dataSource.query(
-      `SELECT m.* FROM movies m WHERE status='published' ORDER BY published_at DESC NULLS LAST,id ASC LIMIT $1`, [limit],
-    ) as MovieRow[];
-    const topRated = await this.dataSource.query(
-      `SELECT m.* FROM movies m WHERE status='published' ORDER BY average_rating DESC,id ASC LIMIT $1`, [limit],
-    ) as MovieRow[];
-    return {
-      newReleases: { type: 'new_releases', items: rows.map(publicMovie) },
-      topRated: { type: 'top_rated', items: topRated.map(publicMovie) },
-      trending: { type: 'fallback_new_releases', items: rows.map(publicMovie) },
-    };
+  async home(pageSize = 20): Promise<Array<{ type: string; name: string; items: Record<string, unknown>[] }>> {
+    const limit = Math.min(20, Math.max(1, Math.trunc(pageSize)));
+    const rows = await this.dataSource.query(`
+      SELECT c.type AS collection_type,c.name AS collection_name,c.display_order,ci.position,m.*
+      FROM catalog_home_collections c
+      LEFT JOIN catalog_home_collection_items ci ON ci.collection_type=c.type AND ci.position <= $1
+      LEFT JOIN movies m ON m.id=ci.movie_id AND m.status='published'
+      ORDER BY c.display_order,c.type,ci.position
+    `, [limit]) as Array<MovieRow & { collection_type: string; collection_name: string; display_order: number; position: number | null }>;
+    const sections = new Map<string, { type: string; name: string; items: Record<string, unknown>[] }>();
+    for (const row of rows) {
+      let section = sections.get(row.collection_type);
+      if (!section) {
+        section = { type: row.collection_type, name: row.collection_name, items: [] };
+        sections.set(row.collection_type, section);
+      }
+      if (row.id) section.items.push(publicMovie(row));
+    }
+    return [...sections.values()];
+  }
+
+  async refreshHomeCollections(scope: 'all' | 'sync' = 'all'): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      await manager.query(`SELECT pg_advisory_xact_lock(hashtext('catalog-home-projection'))`);
+
+      const definitions: Array<{ type: string; name: string; displayOrder: number; ids: string[] }> = [
+        { type: 'new_releases', name: 'Mới phát hành', displayOrder: 10, ids: await this.newReleaseHomeMovieIds(manager) },
+        { type: 'ongoing_series', name: 'Phim bộ đang chiếu', displayOrder: 60, ids: await this.rankedHomeMovieIds(manager, `m.type='series' AND COALESCE(provider_metrics.is_completed,false)=false`) },
+      ];
+      if (scope === 'all') {
+        const countries = [
+          { slug: 'viet-nam', name: 'Top phim Việt Nam', displayOrder: 30 },
+          { slug: 'trung-quoc', name: 'Top phim Trung Quốc', displayOrder: 31 },
+          { slug: 'han-quoc', name: 'Top phim Hàn Quốc', displayOrder: 32 },
+          { slug: 'nhat-ban', name: 'Top phim Nhật Bản', displayOrder: 33 },
+        ];
+        definitions.splice(1, 0, { type: 'trending', name: 'Top thịnh hành', displayOrder: 20, ids: await this.rankedHomeMovieIds(manager) });
+        for (const country of countries) {
+          definitions.push({
+            type: `country:${country.slug}`, name: country.name, displayOrder: country.displayOrder,
+            ids: await this.rankedHomeMovieIds(manager, `EXISTS(SELECT 1 FROM movie_countries mc JOIN countries c ON c.id=mc.country_id WHERE mc.movie_id=m.id AND c.slug=$1)`, [country.slug]),
+          });
+        }
+        const genres = await manager.query(`SELECT slug,name FROM genres ORDER BY lower(name),slug`) as Array<{ slug: string; name: string }>;
+        const genreTypes = genres.map((genre) => `genre:${genre.slug}`);
+        await manager.query(`DELETE FROM catalog_home_collections WHERE type LIKE 'genre:%' AND NOT (type = ANY($1::text[]))`, [genreTypes]);
+        for (const [index, genre] of genres.entries()) {
+          definitions.push({
+            type: `genre:${genre.slug}`, name: `Thể loại: ${genre.name}`, displayOrder: 100 + index,
+            ids: await this.rankedHomeMovieIds(manager, `EXISTS(SELECT 1 FROM movie_genres mg JOIN genres g ON g.id=mg.genre_id WHERE mg.movie_id=m.id AND g.slug=$1)`, [genre.slug]),
+          });
+        }
+      }
+      for (const definition of definitions) await this.replaceHomeCollection(manager, definition);
+    });
+  }
+
+  private async newReleaseHomeMovieIds(manager: EntityManager): Promise<string[]> {
+    const rows = await manager.query(`
+      SELECT m.id
+      FROM movies m
+      LEFT JOIN (
+        SELECT movie_id,MAX(external_updated_at) AS external_updated_at
+        FROM content_sources WHERE provider='kkphim' GROUP BY movie_id
+      ) provider_metrics ON provider_metrics.movie_id=m.id
+      WHERE m.status='published'
+      ORDER BY COALESCE(provider_metrics.external_updated_at,m.published_at,m.updated_at) DESC NULLS LAST,m.id ASC
+      LIMIT 20
+    `) as Array<{ id: string }>;
+    return rows.map((row) => row.id);
+  }
+
+  private async rankedHomeMovieIds(manager: EntityManager, filter = 'true', values: unknown[] = []): Promise<string[]> {
+    const rows = await manager.query(`
+      WITH provider_metrics AS (
+        SELECT movie_id,MAX(external_updated_at) AS external_updated_at,
+          MAX(provider_view_count) AS view_count,MAX(provider_vote_count) AS vote_count,
+          bool_or(provider_is_completed) AS is_completed
+        FROM content_sources WHERE provider='kkphim' GROUP BY movie_id
+      ), candidates AS (
+        SELECT m.id,m.average_rating,COALESCE(provider_metrics.external_updated_at,m.published_at,m.updated_at) AS freshness,
+          COALESCE(provider_metrics.view_count,0) AS view_count,COALESCE(provider_metrics.vote_count,0) AS vote_count
+        FROM movies m LEFT JOIN provider_metrics ON provider_metrics.movie_id=m.id
+        WHERE m.status='published' AND ${filter}
+      ), normalized AS (
+        SELECT *,MAX(ln(1 + view_count::numeric)) OVER() AS max_view_score,
+          MAX(ln(1 + vote_count::numeric)) OVER() AS max_vote_score
+        FROM candidates
+      )
+      SELECT id FROM normalized
+      ORDER BY
+        0.30 * (1.0 / (1.0 + GREATEST(0,EXTRACT(epoch FROM now()-freshness)/86400.0)/30.0))
+        + 0.25 * CASE WHEN max_view_score > 0 THEN ln(1 + view_count::numeric)/max_view_score ELSE 0 END
+        + 0.25 * CASE WHEN max_vote_score > 0 THEN ln(1 + vote_count::numeric)/max_vote_score ELSE 0 END
+        + 0.20 * (average_rating::numeric/10.0) DESC,
+        freshness DESC NULLS LAST,id ASC
+      LIMIT 20
+    `, values) as Array<{ id: string }>;
+    return rows.map((row) => row.id);
+  }
+
+  private async replaceHomeCollection(manager: EntityManager, definition: { type: string; name: string; displayOrder: number; ids: string[] }): Promise<void> {
+    await manager.query(`
+      INSERT INTO catalog_home_collections(type,name,display_order,refreshed_at)
+      VALUES($1,$2,$3,now())
+      ON CONFLICT(type) DO UPDATE SET name=EXCLUDED.name,display_order=EXCLUDED.display_order,refreshed_at=EXCLUDED.refreshed_at
+    `, [definition.type, definition.name, definition.displayOrder]);
+    await manager.query(`DELETE FROM catalog_home_collection_items WHERE collection_type=$1`, [definition.type]);
+    if (definition.ids.length) {
+      await manager.query(`
+        INSERT INTO catalog_home_collection_items(collection_type,position,movie_id)
+        SELECT $1,ordinality::smallint,movie_id
+        FROM unnest($2::uuid[]) WITH ORDINALITY AS ranked(movie_id,ordinality)
+      `, [definition.type, definition.ids]);
+    }
   }
 
   async detail(movieId: string, profileId: string | undefined, userId: string | undefined, requestId: string) {
@@ -259,14 +377,14 @@ export class CatalogService {
       this.dataSource.query(`SELECT g.slug,g.name FROM movie_genres mg JOIN genres g ON g.id=mg.genre_id WHERE mg.movie_id=$1 ORDER BY g.slug`, [movieId]),
       this.dataSource.query(`SELECT c.slug,c.name FROM movie_countries mc JOIN countries c ON c.id=mc.country_id WHERE mc.movie_id=$1 ORDER BY c.slug`, [movieId]),
       this.dataSource.query(`SELECT p.id,p.kind,p.season_id AS "seasonId",s.season_number AS "seasonNumber",p.episode_number AS "episodeNumber",p.label,p.sort_order AS "sortOrder",p.duration_seconds AS "durationSeconds",p.archived_at AS "archivedAt" FROM playable_items p LEFT JOIN seasons s ON s.id=p.season_id WHERE p.movie_id=$1 AND p.archived_at IS NULL ORDER BY p.sort_order,p.id`, [movieId]),
-      this.dataSource.query(`SELECT cs.id,cs.source_type AS "sourceType",cs.provider,cs.source_status AS "sourceStatus",si.id AS "sourceItemId",si.playable_id AS "playableId",si.server_key AS "serverKey",si.server_label AS "serverLabel",si.playback_mode AS "playbackMode",si.source_status AS "sourceStatus" FROM content_sources cs LEFT JOIN source_items si ON si.source_id=cs.id AND si.source_status IN ('available','unknown') WHERE cs.movie_id=$1 ORDER BY cs.source_type,cs.provider,si.server_key,si.id`, [movieId]),
+      this.dataSource.query(`SELECT cs.id,cs.source_type AS "sourceType",cs.provider,cs.source_status AS "sourceStatus",si.id AS "sourceItemId",si.playable_id AS "playableId",si.server_key AS "serverKey",si.server_label AS "serverLabel",si.playback_mode AS "playbackMode",si.source_status AS "sourceItemStatus" FROM content_sources cs LEFT JOIN source_items si ON si.source_id=cs.id AND si.source_status IN ('available','unknown','error') WHERE cs.movie_id=$1 ORDER BY cs.source_type,cs.provider,si.server_key,si.id`, [movieId]),
     ]);
     return { ...publicMovie(movie), genres, countries, playableItems, sources };
   }
 
   async createSyncRun(input: { mode: 'discovery' | 'refresh' | 'import'; maxPages?: number; slug?: string; movieId?: string }, requestedBy: string | undefined) {
     const id = randomUUID();
-    const maxPages = Math.min(3, Math.max(1, input.maxPages ?? 1));
+    const maxPages = Math.min(10_000, Math.max(1, input.maxPages ?? 1));
     const parameters = input.mode === 'import' ? { slug: input.slug, movieId: input.movieId ?? null }
       : input.mode === 'discovery' ? { maxPages } : { batchSize: 30 };
     if (input.mode === 'import' && !input.slug) throw new BadRequestException('slug is required for import');
@@ -295,7 +413,8 @@ export class CatalogService {
     const result: unknown = await this.dataSource.query(`
       WITH candidate AS (
         SELECT id FROM sync_runs
-        WHERE status='queued' OR (status='running' AND lease_until < now())
+        WHERE (status='queued' AND (lease_until IS NULL OR lease_until < now()))
+           OR (status='running' AND lease_until < now())
         ORDER BY created_at,id LIMIT 1 FOR UPDATE SKIP LOCKED
       )
       UPDATE sync_runs r SET status='running',started_at=COALESCE(r.started_at,now()),lease_until=now()+interval '2 minutes',attempts=r.attempts+1
@@ -321,7 +440,7 @@ export class CatalogService {
         createdCount += result.created ? 1 : 0;
         updatedCount += result.created ? 0 : 1;
       } else if (mode === 'discovery') {
-        const maxPages = Math.min(3, Math.max(1, Number(parameters.maxPages ?? 1)));
+        const maxPages = Math.min(10_000, Math.max(1, Number(parameters.maxPages ?? 1)));
         let page = Math.max(1, Number(checkpoint.nextPage ?? 1));
         while (page < Number(checkpoint.startPage ?? 1) + maxPages) {
           const items = await this.provider.discover(page);
@@ -338,6 +457,7 @@ export class CatalogService {
               lastErrorCode = error instanceof ProviderResponseError ? error.code : error instanceof ConflictException ? 'CATALOG_MAPPING_CONFLICT' : 'IMPORT_ITEM_FAILED';
             }
             await this.renewRunLease(id, { nextPage: page, lastExternalId: item.externalId, processedOnPage: true });
+            await new Promise<void>((resolve) => setTimeout(resolve, this.config.providerRequestDelayMs));
           }
           page += 1;
           await this.renewRunLease(id, { nextPage: page, startPage: Number(checkpoint.startPage ?? 1), lastExternalId: null });
@@ -364,14 +484,27 @@ export class CatalogService {
         }
       }
       const finalStatus = errorCount > 0 ? 'partial' : 'completed';
+      try { await this.refreshHomeCollections('sync'); } catch { this.logger.warn('Catalog home sync projection refresh failed'); }
       await this.dataSource.query(
         `UPDATE sync_runs SET status=$2,created_count=$3,updated_count=$4,error_count=$5,last_error_code=$6,checkpoint=checkpoint||$7::jsonb,finished_at=now(),lease_until=NULL WHERE id=$1`,
         [id, finalStatus, createdCount, updatedCount, errorCount, lastErrorCode, JSON.stringify({ completed: true })],
       );
     } catch (error) {
       const code = error instanceof ProviderResponseError ? error.code : error instanceof ConflictException ? 'CATALOG_MAPPING_CONFLICT' : 'SYNC_RUN_FAILED';
+      if (this.isRetryableProviderError(error)) {
+        await this.dataSource.query(
+          `UPDATE sync_runs SET status='queued',last_error_code=$2,error_count=error_count+1,lease_until=now()+($3 * interval '1 millisecond') WHERE id=$1`,
+          [id, code, this.config.syncRetryMs],
+        );
+        return;
+      }
       await this.dataSource.query(`UPDATE sync_runs SET status='failed',last_error_code=$2,finished_at=now(),lease_until=NULL WHERE id=$1`, [id, code]);
     }
+  }
+
+  private isRetryableProviderError(error: unknown): boolean {
+    return error instanceof ProviderResponseError
+      && (error.code === 'PROVIDER_UNAVAILABLE' || error.status === 429 || (error.status !== undefined && error.status >= 500));
   }
 
   private async renewRunLease(id: string, checkpoint: Record<string, unknown>): Promise<void> {
@@ -449,17 +582,20 @@ export class CatalogService {
       if (!existingSource) {
         sourceId = randomUUID();
         await manager.query(
-          `INSERT INTO content_sources(id,movie_id,source_type,provider,external_id,external_slug,external_updated_at,source_status,metadata_checked_at,version)
-           VALUES($1,$2,'third_party','kkphim',$3,$4,$5,'unknown',now(),1)`,
-          [sourceId, movieId, metadata.externalId, metadata.slug, metadata.externalUpdatedAt],
+          `INSERT INTO content_sources(id,movie_id,source_type,provider,external_id,external_slug,external_updated_at,provider_view_count,provider_vote_count,provider_is_completed,source_status,metadata_checked_at,version)
+           VALUES($1,$2,'third_party','kkphim',$3,$4,$5,$6,$7,$8,'unknown',now(),1)`,
+          [sourceId, movieId, metadata.externalId, metadata.slug, metadata.externalUpdatedAt, metadata.providerViewCount, metadata.providerVoteCount, metadata.isCompleted],
         );
       } else {
         sourceId = String(existingSource.id);
         sourceIdentityChanged = String(existingSource.external_slug) !== metadata.slug
-          || (existingSource.external_updated_at ? new Date(String(existingSource.external_updated_at)).toISOString() : null) !== metadata.externalUpdatedAt;
+          || (existingSource.external_updated_at ? new Date(String(existingSource.external_updated_at)).toISOString() : null) !== metadata.externalUpdatedAt
+          || Number(existingSource.provider_view_count ?? 0) !== metadata.providerViewCount
+          || Number(existingSource.provider_vote_count ?? 0) !== metadata.providerVoteCount
+          || Boolean(existingSource.provider_is_completed) !== metadata.isCompleted;
         await manager.query(
-          `UPDATE content_sources SET external_slug=$2,external_updated_at=$3,metadata_checked_at=now(),version=version+CASE WHEN $4 THEN 1 ELSE 0 END,updated_at=now() WHERE id=$1`,
-          [sourceId, metadata.slug, metadata.externalUpdatedAt, sourceIdentityChanged],
+          `UPDATE content_sources SET external_slug=$2,external_updated_at=$3,provider_view_count=$4,provider_vote_count=$5,provider_is_completed=$6,metadata_checked_at=now(),version=version+CASE WHEN $7 THEN 1 ELSE 0 END,updated_at=now() WHERE id=$1`,
+          [sourceId, metadata.slug, metadata.externalUpdatedAt, metadata.providerViewCount, metadata.providerVoteCount, metadata.isCompleted, sourceIdentityChanged],
         );
       }
       if (!metadataLocked) await this.syncTaxonomies(manager, movieId, metadata);
@@ -599,13 +735,28 @@ export class CatalogService {
     return { movieId: id, status: 'draft' };
   }
 
-  async adminMovies(page = 1, pageSize = 20, status?: string) {
+  async adminMovies(page = 1, pageSize = 20, status?: string, q?: string) {
     const size = Math.min(50, Math.max(1, pageSize));
     const offset = (Math.max(1, page) - 1) * size;
-    const rows = await this.dataSource.query(`SELECT * FROM movies WHERE ($1::text IS NULL OR status=$1) ORDER BY created_at DESC,id LIMIT $2 OFFSET $3`, [status ?? null, size, offset]) as MovieRow[];
-    const count = await this.dataSource.query(`SELECT count(*)::int AS total FROM movies WHERE ($1::text IS NULL OR status=$1)`, [status ?? null]) as Array<{ total: number }>;
+    const term = text(q, 100);
+    const where = `($1::text IS NULL OR status=$1) AND ($2::text IS NULL OR title ILIKE '%' || $2 || '%' OR origin_title ILIKE '%' || $2 || '%')`;
+    const rows = await this.dataSource.query(`SELECT * FROM movies WHERE ${where} ORDER BY created_at DESC,id LIMIT $3 OFFSET $4`, [status ?? null, term, size, offset]) as MovieRow[];
+    const count = await this.dataSource.query(`SELECT count(*)::int AS total FROM movies WHERE ${where}`, [status ?? null, term]) as Array<{ total: number }>;
     const totalItems = Number(count[0]?.total ?? 0);
     return { items: rows.map(publicMovie), page: Math.max(1, page), pageSize: size, totalItems, totalPages: Math.ceil(totalItems / size) };
+  }
+
+  async adminMovieDetail(movieId: string) {
+    const rows = await this.dataSource.query(`SELECT * FROM movies WHERE id=$1`, [movieId]) as MovieRow[];
+    const movie = rows[0];
+    if (!movie) throw new NotFoundException('Movie not found');
+    const [genres, countries, playableItems, sources] = await Promise.all([
+      this.dataSource.query(`SELECT g.slug,g.name FROM movie_genres mg JOIN genres g ON g.id=mg.genre_id WHERE mg.movie_id=$1 ORDER BY g.slug`, [movieId]),
+      this.dataSource.query(`SELECT c.slug,c.name FROM movie_countries mc JOIN countries c ON c.id=mc.country_id WHERE mc.movie_id=$1 ORDER BY c.slug`, [movieId]),
+      this.dataSource.query(`SELECT p.id,p.kind,p.season_id AS "seasonId",s.season_number AS "seasonNumber",p.episode_number AS "episodeNumber",p.label,p.sort_order AS "sortOrder",p.duration_seconds AS "durationSeconds",p.archived_at AS "archivedAt" FROM playable_items p LEFT JOIN seasons s ON s.id=p.season_id WHERE p.movie_id=$1 ORDER BY p.sort_order,p.id`, [movieId]),
+      this.dataSource.query(`SELECT cs.id AS "sourceId",cs.source_type AS "sourceType",cs.provider,cs.external_id AS "externalId",cs.external_slug AS "externalSlug",cs.source_status AS "sourceStatus",cs.metadata_locked AS "metadataLocked",cs.metadata_checked_at AS "metadataCheckedAt",si.id AS "sourceItemId",si.playable_id AS "playableId",si.server_key AS "serverKey",si.server_label AS "serverLabel",si.external_episode_key AS "externalEpisodeKey",si.external_episode_slug AS "externalEpisodeSlug",si.playback_mode AS "playbackMode",si.source_status AS "sourceItemStatus",si.last_resolved_at AS "lastResolvedAt",si.retry_after AS "retryAfter" FROM content_sources cs LEFT JOIN source_items si ON si.source_id=cs.id WHERE cs.movie_id=$1 ORDER BY cs.source_type,cs.provider,si.server_key,si.id`, [movieId]),
+    ]);
+    return { ...publicMovie(movie), genres, countries, playableItems, sources };
   }
 
   async patchMovie(movieId: string, input: Record<string, unknown>) {

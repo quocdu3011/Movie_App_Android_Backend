@@ -10,6 +10,7 @@ import { CatalogOutboxPublisher } from './catalog-outbox.publisher';
 import { KkphimAdapter } from '@movie/content-provider';
 import { CatalogSearchProjection } from './catalog-search.projection';
 import { CatalogSearchService } from './catalog-search.service';
+import { CatalogHomeProjectionWorker } from './catalog-home-projection.worker';
 
 const config = loadCatalogConfig();
 
@@ -29,6 +30,7 @@ const config = loadCatalogConfig();
     CatalogProfileGuard,
     CatalogRecommendationGuard,
     CatalogSyncWorker,
+    CatalogHomeProjectionWorker,
     CatalogOutboxPublisher,
     CatalogSearchService,
     CatalogSearchProjection,

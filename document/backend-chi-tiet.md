@@ -138,17 +138,20 @@ CREATE TABLE watch_progress (
   last_seq BIGINT NOT NULL,
   position_seconds INTEGER NOT NULL CHECK (position_seconds >= 0),
   duration_seconds INTEGER CHECK (duration_seconds > 0),
+  requires_minimum_progress BOOLEAN NOT NULL DEFAULT true,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (profile_id, playable_id),
   CHECK (duration_seconds IS NULL OR position_seconds <= duration_seconds)
 );
 CREATE INDEX idx_progress_profile_updated
   ON watch_progress (profile_id, updated_at DESC);
+CREATE INDEX idx_progress_profile_movie_updated
+  ON watch_progress (profile_id, movie_id, updated_at DESC, session_ordinal DESC, playable_id);
 ```
 
 Không dùng biểu thức trong danh sách cột PRIMARY KEY và không dùng episode nullable trong PK. `playableId` luôn có giá trị, kể cả phim lẻ. Theo [PostgreSQL constraints](https://www.postgresql.org/docs/current/ddl-constraints.html), PK đòi hỏi các cột không null; các ràng buộc/index đặc biệt phải được định nghĩa đúng loại.
 
-**Ghi tiến độ MVP:** commit PostgreSQL trước khi trả thành công, cập nhật/xóa Redis cache sau commit. Chưa dùng write-behind/BullMQ cho progress; cân nhắc sau benchmark để tránh mất tiến độ đã ACK khi Redis/worker hỏng. Chỉ upsert khi `(session_ordinal,last_seq)` mới hơn bản ghi hiện tại. Vị trí có thể giảm khi tua về trước; không lấy MAX(position). Server cấp ordinal, client tăng seq trong một session; không dùng đồng hồ client để quyết định thứ tự. Session mới chỉ chiếm tiến độ khi nhận update hợp lệ đầu tiên.
+**Ghi tiến độ MVP:** commit PostgreSQL trước khi trả thành công, cập nhật/xóa Redis cache sau commit. Chưa dùng write-behind/BullMQ cho progress; cân nhắc sau benchmark để tránh mất tiến độ đã ACK khi Redis/worker hỏng. Chỉ upsert khi `(session_ordinal,last_seq)` mới hơn bản ghi hiện tại. Vị trí có thể giảm khi tua về trước; không lấy MAX(position). Server cấp ordinal, client tăng seq trong một session; không dùng đồng hồ client để quyết định thứ tự. Session mới chỉ chiếm tiến độ khi nhận update hợp lệ đầu tiên. Khi đọc history/continue watching, chọn duy nhất playable mới nhất của mỗi movie; tập 1 hoặc movie chỉ có một playable cần `position_seconds / duration_seconds > 0.02`, còn playable khác không bị ngưỡng này. Progress vẫn được giữ để resume trực tiếp dù chưa đạt ngưỡng.
 
 Read-cache progress là tùy chọn, TTL khởi điểm 60 giây, update có version gate theo cùng tuple để callback request cũ không ghi đè cache mới. Khi tạo phiên/resume phải đọc PostgreSQL để không dùng cache stale; lỗi cache không biến DB commit thành lỗi phải gửi lại. BIGINT ordinal/seq phải giữ độ chính xác trong xử lý và DTO, không ép sang JavaScript Number ngoài safe integer range.
 
@@ -196,8 +199,8 @@ Tham chiếu [API KKPhim](https://kkphim.com/api-document), đối chiếu ngày
 **Public catalog/search chỉ đọc catalog nội bộ đã nhập**, trộn cả hai nguồn theo ID chung. Không gộp trực tiếp hai trang tìm kiếm độc lập từ PostgreSQL và KKPhim. Điều này giữ phân trang, favorites, history và OpenSearch nhất quán. Admin discovery có thể gọi API ngoài rồi import; phim chưa import chưa xuất hiện trong public catalog.
 
 - Import idempotent bằng `(provider,external_id)`; slug là alias có thể đổi. Upsert alias có collision phải báo lỗi để xử lý, không gắn nhầm movie. UUID local giữ nguyên qua sync.
-- Discovery mặc định dev tắt, có cấu hình bật mỗi 30 phút tối đa 3 trang; đây là lựa chọn tải của dự án, không phải quota của provider. Refresh danh sách đã import theo vòng, tuổi metadata mục tiêu 6 giờ; có manual backfill/checkpoint để phủ mục cũ. Discovery hữu hạn không bảo đảm bắt hết cập nhật.
-- Phân trang bằng pagination provider trả, có maxPages và checkpoint theo job; sửa danh sách trong lúc scan có thể gây lặp, upsert xử lý được. Không suy ra phim bị xóa chỉ vì không thấy trong 3 trang đầu. Retry refresh mục lỗi; chỉ xác nhận mất nguồn sau phản hồi detail rõ ràng/recheck, lưu tombstone để giữ ID.
+- Discovery mặc định dev tắt. Manual discovery nhận `maxPages`; dùng `10000` để quét hết số trang provider công bố, còn một giá trị nhỏ phù hợp cho cập nhật giới hạn. Refresh danh sách đã import theo vòng, tuổi metadata mục tiêu 6 giờ; có manual backfill/checkpoint để phủ mục cũ.
+- Phân trang bằng pagination provider trả, có maxPages và checkpoint theo job; `maxPages: 10000` quét đến trang cuối mà provider công bố (adapter cũng giới hạn page tối đa 10000). Sửa danh sách trong lúc scan có thể gây lặp, upsert xử lý được. Không suy ra phim bị xóa chỉ vì không thấy trong một lượt quét. Retry refresh mục lỗi; chỉ xác nhận mất nguồn sau phản hồi detail rõ ràng/recheck, lưu tombstone để giữ ID.
 - `metadata_locked` khóa các trường biên tập (title, description, ảnh, thể loại); vẫn refresh selectors/availability của tập/server. `external_updated_at` không đổi có thể bỏ qua metadata, nhưng không bỏ qua refresh tập theo lịch hoặc resolve lúc phát. Provider không cam kết timestamp đổi cho mọi thay đổi link.
 - `movies.status`: owned tạo draft, admin publish; KKPhim import thành công auto-publish. Archive thủ công luôn được giữ qua sync. Chỉ phát `movie.published` ở lần chuyển sang published; update metadata phát `movie.updated`, archive phát `movie.archived`.
 - `movies.type` là movie/series, khác `content_kind` film/animation/show. Không map mọi `hoathinh` thành series. Dùng cấu trúc tập/TMDB type khi có; trường không đủ rõ chuyển import sang lỗi cần hiệu chỉnh kỹ thuật, không đoán phá schema.
@@ -274,7 +277,7 @@ Tạo phiên là POST vì làm thay đổi trạng thái; bỏ hai route GET t�
 
 GET `/catalog/movies`, `/catalog/movies/:movieId` và `/catalog/search` nhận thêm `profileId` tùy chọn. Khi có profileId, Gateway/Catalog bắt buộc JWT và Profile ownership, lọc kids tại backend; detail không phù hợp trả 404. Android đang chọn profile kids phải luôn gửi profileId. Không có profileId là catalog public tổng quát; tính năng này không phải khóa kiểm soát trẻ em chống chuyển hồ sơ (PIN thuộc phần sau). Cache key bao gồm chế độ kids đã xác minh, không tin flag client. `/catalog/home` luôn public; home theo profile dùng `/home`.
 
-`catalog/home`: `newReleases` theo publishedAt; `topRated` theo rating (không gọi top rating là trending). `trending` từ qualified view 7 ngày, dữ liệu rỗng fallback newReleases và ghi rõ loại section. `/home` gọi composition ở Gateway, tránh vòng Catalog ↔ Streaming.
+`catalog/home` chỉ đọc projection Catalog đã tính sẵn, trả `data` là mảng section `{ type, name, items }`. Job sau mỗi sync/import/refresh KKPhim làm mới `new_releases` theo `content_sources.external_updated_at` (fallback `publishedAt`) và `ongoing_series` (series chưa hoàn tất). Worker khởi động và mỗi 00:00 làm mới `trending`, top 20 theo bốn quốc gia Việt Nam/Trung Quốc/Hàn Quốc/Nhật Bản và top 20 từng thể loại. Điểm cân bằng độ mới, lượt xem, lượt đánh giá và rating do KKPhim cung cấp; số liệu provider thiếu là 0. `/home` gọi composition ở Gateway, tránh vòng Catalog ↔ Streaming.
 
 ### 4.3. Admin API và routing
 

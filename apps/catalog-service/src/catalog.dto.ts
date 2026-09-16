@@ -28,7 +28,16 @@ export class ImportProviderDto {
 
 export class SyncProviderDto {
   @IsOptional() @IsIn(['discovery', 'refresh']) mode: 'discovery' | 'refresh' = 'discovery';
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(3) maxPages = 1;
+  // 10,000 matches the maximum page number accepted by the KKPhim adapter.
+  // The worker stops earlier when the provider reports its last page.
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(10_000) maxPages = 1;
+}
+
+export class AdminMovieQueryDto {
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) page = 1;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(50) pageSize = 20;
+  @IsOptional() @IsIn(['draft', 'published', 'archived']) status?: 'draft' | 'published' | 'archived';
+  @IsOptional() @IsString() @MaxLength(100) q?: string;
 }
 
 export class CreateMovieDto {

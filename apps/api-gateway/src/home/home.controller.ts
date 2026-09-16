@@ -17,7 +17,7 @@ export class HomeController {
     }
     const headers = { authorization: `Bearer ${this.config.serviceToken}`, 'x-user-id': session.userId, 'x-caller-service': 'api-gateway', 'x-request-id': request.requestId ?? 'unknown' };
     let history: unknown;
-    let catalogHome: Record<string, unknown>;
+    let catalogHome: Array<{ type?: string; name?: string; items?: unknown[] }>;
     try {
       const [historyResponse, catalogResponse] = await Promise.all([
         fetch(`${this.config.profileUrl}/profiles/${encodeURIComponent(profileId)}/watch-history`, { headers, signal: AbortSignal.timeout(5_000) }),
@@ -26,7 +26,7 @@ export class HomeController {
       if (historyResponse.status === 404) { response.status(404).json(errorEnvelope({ code: 'PROFILE_NOT_FOUND', message: 'Profile not found' }, request.requestId ?? 'unknown')); return; }
       if (!historyResponse.ok || !catalogResponse.ok) throw new Error('upstream unavailable');
       history = (await historyResponse.json() as { data?: unknown }).data;
-      catalogHome = ((await catalogResponse.json() as { data?: Record<string, unknown> }).data ?? {});
+      catalogHome = ((await catalogResponse.json() as { data?: Array<{ type?: string; name?: string; items?: unknown[] }> }).data ?? []);
     } catch {
       throw new ServiceUnavailableException('Home dependencies are unavailable');
     }
@@ -37,12 +37,12 @@ export class HomeController {
         if (upstream.ok) recommendation = ((await upstream.json() as { data?: Record<string, unknown> }).data ?? null);
       } catch { /* Recommendation is an optional Home section until G8. */ }
     }
-    const fallback = catalogHome.newReleases ?? { type: 'fallback_empty', items: [] };
+    const newReleases = catalogHome.find((section) => section.type === 'new_releases') ?? { type: 'new_releases', name: 'Mới phát hành', items: [] };
     response.setHeader('cache-control', 'no-store');
     response.status(200).json(successEnvelope({ profileId, sections: [
       { type: 'continue_watching', items: (history as { items?: unknown[] } | undefined)?.items ?? [] },
-      recommendation ?? { type: 'fallback_new_releases', reason: 'recommendation_unavailable', items: (fallback as { items?: unknown[] }).items ?? [] },
-      { type: 'catalog_new_releases', items: (fallback as { items?: unknown[] }).items ?? [] },
+      recommendation ?? { type: 'fallback_new_releases', reason: 'recommendation_unavailable', items: newReleases.items ?? [] },
+      { type: 'catalog_new_releases', items: newReleases.items ?? [] },
     ] }, request.requestId ?? 'unknown'));
   }
 }

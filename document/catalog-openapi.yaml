@@ -19,11 +19,34 @@ paths:
     get:
       tags: [Catalog]
       summary: Read public catalog home items
+      description: Reads only precomputed Catalog home sections. Jobs refresh new releases and ongoing series after KKPhim sync; trending, country and genre rankings refresh at startup and daily at 00:00. Each section has type, display name and at most 20 items.
       parameters:
-        - $ref: '#/components/parameters/PageSize'
+        - name: pageSize
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 20, default: 20 }
       responses:
         '200':
-          description: Catalog items from the local database
+          description: Ordered array of precomputed Catalog home sections from the local database
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuccessEnvelope' }
+  /catalog/genres:
+    get:
+      tags: [Catalog]
+      summary: List imported catalog genres
+      responses:
+        '200':
+          description: Stable list of genre slugs and display names
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuccessEnvelope' }
+  /catalog/countries:
+    get:
+      tags: [Catalog]
+      summary: List imported catalog countries
+      responses:
+        '200':
+          description: Stable list of country slugs and display names
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SuccessEnvelope' }
@@ -86,6 +109,10 @@ paths:
         - name: status
           in: query
           schema: { type: string, enum: [draft, published, archived] }
+        - name: q
+          in: query
+          description: Case-insensitive title or original-title search.
+          schema: { type: string, minLength: 1, maxLength: 100 }
       responses:
         '200': { description: Admin movie page, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessEnvelope' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -102,6 +129,15 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /admin/movies/{movieId}:
+    get:
+      tags: [Catalog Admin]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/MovieId' }]
+      responses:
+        '200': { description: Admin movie detail for draft, published, or archived content; playback URLs are excluded, content: { application/json: { schema: { $ref: '#/components/schemas/SuccessEnvelope' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Movie not found }
     patch:
       tags: [Catalog Admin]
       security: [{ bearerAuth: [] }]
@@ -228,7 +264,7 @@ paths:
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
-        content: { application/json: { schema: { type: object, properties: { mode: { type: string, enum: [discovery, refresh], default: discovery }, maxPages: { type: integer, minimum: 1, maximum: 3, default: 1 } } } } }
+        content: { application/json: { schema: { type: object, properties: { mode: { type: string, enum: [discovery, refresh], default: discovery }, maxPages: { type: integer, minimum: 1, maximum: 10000, default: 1, description: 'Use 10000 to scan every page currently reported by KKPhim; the worker stops at the provider total.' } } } } }
       responses:
         '202':
           description: Durable bounded sync queued

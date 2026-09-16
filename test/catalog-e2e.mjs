@@ -135,7 +135,9 @@ const provider = createServer((request, response) => {
     return;
   }
   if (url.pathname.includes('/danh-sach/')) {
-    response.end(JSON.stringify({ status: true, items: [{ _id: fixtureMovieId, slug: filmSlug, name: film.movie.name }], pagination: { currentPage: 1, totalItems: 1, totalItemsPerPage: 1, totalPages: 1 } }));
+    const page = Number(url.searchParams.get('page') ?? '1');
+    const item = page === 2 ? { _id: fixtureSeriesId, slug: seriesSlug, name: series.movie.name } : { _id: fixtureMovieId, slug: filmSlug, name: film.movie.name };
+    response.end(JSON.stringify({ status: true, items: page <= 2 ? [item] : [], pagination: { currentPage: page, totalItems: 2, totalItemsPerPage: 1, totalPages: 2 } }));
     return;
   }
   response.statusCode = 404;
@@ -258,6 +260,24 @@ try {
   assert.ok(publicList.body.data.items.some((item) => item.id === ownedMovieId));
   assert.ok(publicList.body.data.items.some((item) => item.id === importedFilm.rows[0].id));
   assert.equal(publicList.headers.get('cache-control'), 'public, max-age=300');
+  const publicHome = await request(gatewayUrl, '/catalog/home');
+  assert.equal(publicHome.status, 200, JSON.stringify(publicHome.body));
+  assert.equal(Array.isArray(publicHome.body.data), true, 'home data is an ordered section array');
+  const newReleases = publicHome.body.data.find((section) => section.type === 'new_releases');
+  assert.equal(newReleases?.name, 'Mới phát hành');
+  assert.ok(newReleases?.items.some((item) => item.id === importedFilm.rows[0].id));
+  const ongoingSeries = publicHome.body.data.find((section) => section.type === 'ongoing_series');
+  assert.equal(ongoingSeries?.name, 'Phim bộ đang chiếu');
+  assert.ok(ongoingSeries?.items.some((item) => item.id === ownedMovieId));
+  assert.equal(publicHome.headers.get('cache-control'), 'public, max-age=300');
+  const genres = await request(gatewayUrl, '/catalog/genres');
+  assert.equal(genres.status, 200, JSON.stringify(genres.body));
+  assert.ok(genres.body.data.items.some((item) => item.slug === 'hoat-hinh' && item.name === 'Hoạt hình'));
+  assert.equal(genres.headers.get('cache-control'), 'public, max-age=300');
+  const countries = await request(gatewayUrl, '/catalog/countries');
+  assert.equal(countries.status, 200, JSON.stringify(countries.body));
+  assert.ok(countries.body.data.items.some((item) => item.slug === 'viet-nam' && item.name === 'Việt Nam'));
+  assert.equal(countries.headers.get('cache-control'), 'public, max-age=300');
   const profileRequired = await request(gatewayUrl, `/catalog/movies?profileId=${kidsProfile.body.data.id}`);
   assert.equal(profileRequired.status, 401, 'profileId forces Gateway JWT validation');
   const kidsList = await request(gatewayUrl, `/catalog/movies?profileId=${kidsProfile.body.data.id}`, { token: userLogin.accessToken });
@@ -278,6 +298,11 @@ try {
 
   const sourceItemId = seriesItems.rows.find((row) => row.episode_number === 1 && row.server_key === 'server-a').id;
   const originalPlayable = seriesItems.rows.find((row) => row.id === sourceItemId).playable_id;
+  await pool.query(`UPDATE source_items SET source_status='error',retry_after=now()+interval '30 seconds' WHERE id=$1`, [sourceItemId]);
+  const detailAfterResolveError = await request(gatewayUrl, `/catalog/movies/${ownedMovieId}`);
+  const erroredSource = detailAfterResolveError.body.data.sources.find((source) => source.sourceItemId === sourceItemId);
+  assert.ok(erroredSource, 'a temporarily failed source remains available in movie detail after reload');
+  assert.equal(erroredSource.sourceItemStatus, 'error');
   const mappingEdit = await request(gatewayUrl, `/admin/source-items/${sourceItemId}`, { method: 'PATCH', token: admin.accessToken, body: { externalEpisodeSlug: 'tap-1-a-corrected' } });
   assert.equal(mappingEdit.status, 200, JSON.stringify(mappingEdit.body));
   assert.equal(mappingEdit.body.data.playableId, originalPlayable);
@@ -319,6 +344,14 @@ try {
   const archivedState = await pool.query(`SELECT status FROM movies WHERE id=$1`, [stableId]);
   assert.equal(archivedState.rows[0].status, 'archived', 'refresh cannot unarchive a manually archived movie');
   console.log('PASS G3 sync: lease/checkpoint job, metadata lock, source availability refresh, slug stability, no publish spam, archive persistence');
+
+  const fullDiscovery = await request(gatewayUrl, '/admin/providers/kkphim/sync', { method: 'POST', token: admin.accessToken, body: { mode: 'discovery', maxPages: 4 } });
+  assert.equal(fullDiscovery.status, 202, JSON.stringify(fullDiscovery.body));
+  const fullDiscoveryRun = await pollRun(gatewayUrl, fullDiscovery.body.data.syncRunId, admin.accessToken);
+  assert.equal(fullDiscoveryRun.status, 'completed', JSON.stringify(fullDiscoveryRun));
+  assert.equal(fullDiscoveryRun.checkpoint.completed, true);
+  assert.equal(fullDiscoveryRun.checkpoint.nextPage, 3, 'discovery stops at the provider total even when maxPages is larger');
+  console.log('PASS G3 full discovery: accepts maxPages above three and stops at the provider-reported last page');
 
   const beforeReclaim = await pool.query(`SELECT attempts FROM sync_runs WHERE id=$1`, [seriesRun.id]);
   await pool.query(`UPDATE sync_runs SET status='running',lease_until=now()-interval '1 second',finished_at=NULL WHERE id=$1`, [seriesRun.id]);

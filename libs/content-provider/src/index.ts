@@ -43,6 +43,9 @@ export interface ProviderMovieMetadata {
   type: 'movie' | 'series';
   contentKind: 'film' | 'animation' | 'show';
   averageRating: number;
+  providerViewCount: number;
+  providerVoteCount: number;
+  isCompleted: boolean;
   durationSeconds: number | null;
   externalUpdatedAt: string | null;
   genres: ProviderTaxonomyItem[];
@@ -160,6 +163,23 @@ function normalizeKey(value: string): string {
     .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 100);
 }
 
+function nonNegativeCount(value: unknown): number | null {
+  const count = Number(value);
+  return Number.isSafeInteger(count) && count >= 0 ? count : null;
+}
+
+function highestCount(values: unknown[]): number {
+  return values.reduce<number>((highest, value) => Math.max(highest, nonNegativeCount(value) ?? 0), 0);
+}
+
+function episodeTotal(value: unknown): number | null {
+  const source = text(value);
+  const matches = source?.match(/\d+/g);
+  if (!matches?.length) return null;
+  const total = Number(matches[matches.length - 1]);
+  return Number.isSafeInteger(total) && total >= 0 ? total : null;
+}
+
 function parseDuration(value: unknown): number | null {
   const source = text(value);
   if (!source) return null;
@@ -239,8 +259,17 @@ export function parseProviderDetail(input: unknown): ProviderMovieMetadata {
   const type = explicitSeries || (!explicitMovie && inferredSeries) ? 'series' : 'movie';
   const contentKind = rawType === 'tvshows' || rawType === 'tv-show' ? 'show'
     : animationType ? 'animation' : 'film';
-  const ratingCandidates = [object(movie.tmdb)?.vote_average, object(movie.imdb)?.vote_average, movie.vote_average, movie.rating];
+  const tmdb = object(movie.tmdb);
+  const imdb = object(movie.imdb);
+  const ratingCandidates = [tmdb?.vote_average, imdb?.vote_average, movie.vote_average, movie.rating];
   const rawRating = ratingCandidates.map((value) => Number(value)).find((value) => Number.isFinite(value) && value >= 0 && value <= 10);
+  const providerViewCount = highestCount([movie.view_count, movie.viewCount, movie.views, tmdb?.view_count, tmdb?.views]);
+  const providerVoteCount = highestCount([tmdb?.vote_count, imdb?.vote_count, movie.vote_count, movie.voteCount, movie.rating_count]);
+  const episodeCurrent = episodeTotal(movie.episode_current);
+  const episodeCount = episodeTotal(movie.episode_total);
+  const providerStatus = (text(movie.status) ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const isCompleted = /completed|complete|hoan tat|da xong/.test(providerStatus)
+    || (episodeCurrent !== null && episodeCount !== null && episodeCount > 0 && episodeCurrent >= episodeCount);
   const yearValue = Number(movie.year);
   const releaseYear = Number.isInteger(yearValue) && yearValue >= 1800 && yearValue <= 2200 ? yearValue : null;
   const modified = text(object(movie.modified)?.time);
@@ -248,7 +277,7 @@ export function parseProviderDetail(input: unknown): ProviderMovieMetadata {
   const thumb = safeImage(movie.thumb_url ?? movie.backdrop_url, response.pathImage ?? object(response.data)?.pathImage);
   return {
     externalId, slug, title, originTitle, description: cleanHtml(movie.content), posterUrl: poster, backdropUrl: thumb,
-    releaseYear, type, contentKind, averageRating: rawRating ?? 0,
+    releaseYear, type, contentKind, averageRating: rawRating ?? 0, providerViewCount, providerVoteCount, isCompleted,
     durationSeconds: parseDuration(movie.time), externalUpdatedAt: modified && Number.isFinite(Date.parse(modified)) ? new Date(modified).toISOString() : null,
     genres: categories, countries: taxonomy(movie.country), servers,
   };

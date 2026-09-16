@@ -10,7 +10,7 @@ import { CatalogGatewayGuard, CatalogProfileGuard, CatalogRecommendationGuard, C
 import {
   CatalogQueryDto, CreateContentSourceDto, CreateMovieDto, CreatePlayableDto, CreateSeasonDto,
   CreateSourceItemDto, ImportProviderDto, MetadataLockDto, PatchMovieDto, PatchSourceItemDto,
-  CatalogBatchDto, RecommendationCandidatesDto, SearchProviderQueryDto, SourceItemStatusDto, SyncProviderDto,
+  AdminMovieQueryDto, CatalogBatchDto, RecommendationCandidatesDto, SearchProviderQueryDto, SourceItemStatusDto, SyncProviderDto,
 } from './catalog.dto';
 
 interface CatalogRequest extends Request { requestId?: string }
@@ -26,6 +26,16 @@ export class CatalogPublicController {
   @Get('movies')
   async list(@Query() query: CatalogQueryDto, @Req() request: CatalogRequest) {
     return successEnvelope(await this.catalog.listPublic(query, request.header('x-user-id'), request.requestId ?? 'unknown'), request.requestId ?? 'unknown');
+  }
+
+  @Get('genres')
+  async genres(@Req() request: CatalogRequest) {
+    return successEnvelope(await this.catalog.listGenres(), request.requestId ?? 'unknown');
+  }
+
+  @Get('countries')
+  async countries(@Req() request: CatalogRequest) {
+    return successEnvelope(await this.catalog.listCountries(), request.requestId ?? 'unknown');
   }
 
   @Get('search')
@@ -51,8 +61,13 @@ export class CatalogAdminController {
   async createMovie(@Body() body: CreateMovieDto) { return successEnvelope(await this.catalog.createMovie(body as unknown as Record<string, unknown>)); }
 
   @Get('movies')
-  async listMovies(@Query('page') page?: string, @Query('pageSize') pageSize?: string, @Query('status') status?: string) {
-    return successEnvelope(await this.catalog.adminMovies(Number(page) || 1, Number(pageSize) || 20, status));
+  async listMovies(@Query() query: AdminMovieQueryDto) {
+    return successEnvelope(await this.catalog.adminMovies(query.page, query.pageSize, query.status, query.q));
+  }
+
+  @Get('movies/:movieId')
+  async movieDetail(@Param('movieId', new ParseUUIDPipe()) movieId: string) {
+    return successEnvelope(await this.catalog.adminMovieDetail(movieId));
   }
 
   @Patch('movies/:movieId')

@@ -8,7 +8,7 @@ const legacy = {
   movie: {
     _id: 'kk-1', slug: 'pho-demo', name: 'Phố <b>Demo</b>', origin_name: 'Demo Street',
     content: '<p>Mô tả &amp; nội dung</p><script>unsafe()</script>', type: 'single', year: 2024,
-    time: '1 giờ 35 phút', tmdb: { vote_average: 10 }, poster_url: 'poster.jpg',
+    time: '1 giờ 35 phút', status: 'completed', tmdb: { vote_average: 10, vote_count: 50 }, view_count: 1200, poster_url: 'poster.jpg',
     category: [{ name: 'Hoạt hình', slug: 'hoat-hinh' }], country: [{ name: 'Việt Nam', slug: 'viet-nam' }],
   },
   episodes: [{ server_name: 'Vietsub', server_data: [{ name: 'Full', slug: 'full', filename: 'file-full', link_m3u8: 'https://media.example/master.m3u8?secret=1', link_embed: 'https://player.example/embed' }] }],
@@ -19,6 +19,9 @@ test('KKPhim legacy detail produces URL-free metadata and preserves rating 10.0/
   assert.equal(result.type, 'movie');
   assert.equal(result.contentKind, 'animation');
   assert.equal(result.averageRating, 10);
+  assert.equal(result.providerViewCount, 1200);
+  assert.equal(result.providerVoteCount, 50);
+  assert.equal(result.isCompleted, true);
   assert.equal(result.servers[0].episodes[0].label, 'Full');
   assert.equal(result.durationSeconds, 5700);
   const serialized = JSON.stringify(result);

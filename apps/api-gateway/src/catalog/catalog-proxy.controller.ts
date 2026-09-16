@@ -56,6 +56,14 @@ export class CatalogPublicProxyController extends CatalogProxyBase {
   movies(@Req() request: AuthenticatedRequest, @Res() response: Response) {
     return this.forward('GET', request.originalUrl, undefined, request, response);
   }
+  @Get('genres')
+  genres(@Req() request: AuthenticatedRequest, @Res() response: Response) {
+    return this.forward('GET', request.originalUrl, undefined, request, response);
+  }
+  @Get('countries')
+  countries(@Req() request: AuthenticatedRequest, @Res() response: Response) {
+    return this.forward('GET', request.originalUrl, undefined, request, response);
+  }
   @Get('search')
   search(@Req() request: AuthenticatedRequest, @Res() response: Response) {
     return this.forward('GET', request.originalUrl, undefined, request, response);
@@ -67,11 +75,12 @@ export class CatalogPublicProxyController extends CatalogProxyBase {
 }
 
 @Controller('admin')
-@RequireRoles('admin', 'content_manager')
+@RequireRoles('admin', 'content_manager', 'content_editor')
 export class CatalogAdminProxyController extends CatalogProxyBase {
   constructor(@Inject(GATEWAY_CONFIG) config: GatewayConfig) { super(config); }
   @Post('movies') createMovie(@Body() body: unknown, @Req() request: AuthenticatedRequest, @Res() response: Response) { return this.forward('POST', request.originalUrl, body, request, response, true); }
   @Get('movies') listMovies(@Req() request: AuthenticatedRequest, @Res() response: Response) { return this.forward('GET', request.originalUrl, undefined, request, response, true); }
+  @Get('movies/:movieId') movieDetail(@Req() request: AuthenticatedRequest, @Res() response: Response) { return this.forward('GET', request.originalUrl, undefined, request, response, true); }
   @Patch('movies/:movieId') patchMovie(@Req() request: AuthenticatedRequest, @Body() body: unknown, @Res() response: Response) { return this.forward('PATCH', request.originalUrl, body, request, response, true); }
   @Post('movies/:movieId/publish') publish(@Req() request: AuthenticatedRequest, @Res() response: Response) { return this.forward('POST', request.originalUrl, undefined, request, response, true); }
   @Post('movies/:movieId/archive') archive(@Req() request: AuthenticatedRequest, @Res() response: Response) { return this.forward('POST', request.originalUrl, undefined, request, response, true); }
