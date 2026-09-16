@@ -59,7 +59,11 @@ npm run infra:media
 npm run build
 ```
 
-`infra:up` khởi động PostgreSQL, Redis và Kafka, sau đó bootstrap database, role và topic có thể chạy lặp lại. `infra:media` bật OpenSearch, MinIO, media-edge và tạo hai bucket private. Trên Linux, OpenSearch cần `vm.max_map_count=262144`.
+`infra:up` khởi động PostgreSQL, Redis và Kafka, sau đó bootstrap database, role và topic có thể chạy lặp lại. `infra:media` bật MinIO, media-edge và tạo hai bucket private. Catalog dùng OpenSearch được quản lý bên ngoài Docker; cấu hình `OPENSEARCH_SERVICE_URI`, `OPENSEARCH_USER` và `OPENSEARCH_PASSWORD` trong `.env` trước khi chạy Catalog.
+
+`KKPHIM_MEDIA_HOST_ALLOWLIST=*` cho phép hostname CDN bất kỳ do KKPhim trả về. Streaming vẫn chỉ nhận URL HTTPS dạng `.m3u8`, không chứa thông tin đăng nhập hoặc dùng port ngoài 443 (ngoại trừ fixture test).
+
+`STREAMING_CONCURRENT_LIMIT_ENABLED=false` tạm thời tắt giới hạn số phiên xem đồng thời theo tài khoản. Bật lại bằng cách đặt thành `true` và khởi động lại Streaming; heartbeat và dọn phiên hết hạn vẫn hoạt động.
 
 Chạy các service ở terminal riêng khi phát triển thủ công:
 
